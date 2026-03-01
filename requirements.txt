@@ -4,8 +4,8 @@ twilio==9.0.0
 python-dotenv==1.0.0
 redis==5.0.1
 httpx==0.24.1
-
-supabase==2.3.0
+supabase==2.4.3
 pydantic==2.5.3
 pydantic-settings==2.1.0
 python-multipart==0.0.6
+
