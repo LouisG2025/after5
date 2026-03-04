@@ -1,5 +1,6 @@
 import httpx
 import os
+from datetime import datetime, timezone
 from typing import List, Dict, Any, Optional
 from app.config import settings
 
@@ -83,12 +84,27 @@ class LLMClient:
             system_prompt = f.read()
 
         # Replace placeholders
+        current_datetime = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+
+        # Format conversation history for the system prompt placeholder
+        history = session.get("history", [])
+        if history:
+            history_lines = []
+            for msg in history:
+                role_label = "Lead" if msg["role"] == "user" else "Albert"
+                history_lines.append(f"{role_label}: {msg['content']}")
+            formatted_history = "\n".join(history_lines)
+        else:
+            formatted_history = "(no conversation yet)"
+
         replacements = {
             "{{lead_name}}": lead_data.get("name", "there"),
             "{{lead_company}}": lead_data.get("company", "your company"),
             "{{current_state}}": session.get("state", "opening"),
             "{{calendly_link}}": settings.CALENDLY_LINK,
             "{{bant_scores}}": str(session.get("bant_scores", {})),
+            "{{current_datetime}}": current_datetime,
+            "{{conversation_history}}": formatted_history,
         }
         
         for key, value in replacements.items():
