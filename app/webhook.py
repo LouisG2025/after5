@@ -56,8 +56,8 @@ async def bird_webhook(request: Request, background_tasks: BackgroundTasks):
         logger.warning("Webhook: non-JSON body received")
         return {"status": "error", "reason": "invalid_json"}
 
-    # Full payload logged at DEBUG level for troubleshooting
-    logger.debug("Bird webhook payload: %s", json.dumps(payload)[:500])
+    # Temporarily log at WARNING so it shows in Railway logs for debugging
+    logger.warning("Bird webhook payload: %s", json.dumps(payload)[:800])
 
     event = payload.get("event", payload.get("type", ""))
     logger.info("Bird webhook event: %s", event)
