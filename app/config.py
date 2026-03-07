@@ -2,8 +2,9 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from functools import lru_cache
 
 class Settings(BaseSettings):
-    # MessageBird
+    # MessageBird / Bird
     MESSAGEBIRD_API_KEY: str
+    MESSAGEBIRD_WORKSPACE_ID: str
     MESSAGEBIRD_CHANNEL_ID: str
     MESSAGEBIRD_WHATSAPP_NUMBER: str = ""  # for reference only
 
