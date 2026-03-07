@@ -10,7 +10,7 @@ class Settings(BaseSettings):
 
     # OpenRouter
     OPENROUTER_API_KEY: str
-    OPENROUTER_PRIMARY_MODEL: str = "anthropic/claude-3.5-sonnet"
+    OPENROUTER_PRIMARY_MODEL: str = "anthropic/claude-sonnet-4.6"
     OPENROUTER_FALLBACK_MODEL: str = "openai/gpt-4o-mini"
     OPENROUTER_BANT_MODEL: str = "openai/gpt-4o-mini"
 
