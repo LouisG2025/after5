@@ -9,7 +9,7 @@ from app.bant import extract_bant
 from app.models import ConversationState
 from typing import Dict, Any
 
-async def process_conversation(phone: str, message: str, conversation_id: str = ""):
+async def process_conversation(phone: str, message: str, conversation_id: str = "", source: str = "text"):
     """Main conversation engine logic."""
     # (typing indicator removed — was a no-op in Twilio; MessageBird equivalent not needed)
 
@@ -28,7 +28,7 @@ async def process_conversation(phone: str, message: str, conversation_id: str = 
     lead_data = session.get("lead_data", {})
 
     # 3. Log inbound message
-    await supabase_client.log_message(phone, "inbound", message, session["state"])
+    await supabase_client.log_message(phone, "inbound", message, session["state"], source=source)
 
     # 4. Build context and call LLM
     messages = await llm_client.build_context(session, lead_data, message)

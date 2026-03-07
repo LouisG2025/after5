@@ -10,9 +10,9 @@ class Settings(BaseSettings):
 
     # OpenRouter
     OPENROUTER_API_KEY: str
-    OPENROUTER_PRIMARY_MODEL: str = "anthropic/claude-3.5-sonnet"
-    OPENROUTER_FALLBACK_MODEL: str = "google/gemini-flash-1.5"
-    OPENROUTER_BANT_MODEL: str = "google/gemini-flash-1.5"
+    OPENROUTER_PRIMARY_MODEL: str = "anthropic/claude-sonnet-4.6"
+    OPENROUTER_FALLBACK_MODEL: str = "openai/gpt-4.1"
+    OPENROUTER_BANT_MODEL: str = "openai/gpt-4.1-mini"
 
     # Redis
     REDIS_URL: str
@@ -32,7 +32,12 @@ class Settings(BaseSettings):
     INPUT_BUFFER_SECONDS: int = 3
     TYPING_DELAY_PER_CHAR: float = 0.03
     CHUNK_DELAY_SECONDS: float = 1.5
-    MAX_FOLLOWUPS: int = 3
+    MAX_FOLLOWUPS: int = 2
+
+    # OpenAI / Whisper
+    OPENAI_API_KEY: str = ""
+    VOICE_NOTE_ACKNOWLEDGE: bool = True
+    VOICE_NOTE_ACK_MESSAGE: str = "" # "Got your voice note, let me listen..."
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 

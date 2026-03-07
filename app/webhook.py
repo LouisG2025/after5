@@ -5,7 +5,8 @@ from fastapi import APIRouter, Request, BackgroundTasks
 from app.config import settings
 from app.redis_client import redis_client
 from app.conversation import process_conversation
-from app.messagebird_client import get_contact_phone, _to_internal_phone
+from app.messagebird_client import get_contact_phone, _to_internal_phone, send_message
+from app.stt import process_voice_note
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -21,6 +22,7 @@ async def _buffer_timeout_handler(phone: str):
     messages = await redis_client.get_and_clear_buffer(phone)
     if messages:
         combined_message = " ".join(messages)
+        # Use 'mixed' if any message was audio, but for simple buffer just default to text or pass from first
         await process_conversation(phone, combined_message)
 
 
@@ -98,10 +100,60 @@ async def bird_webhook(request: Request, background_tasks: BackgroundTasks):
 
     # ── Extract message text ────────────────────────────────────────────────
     body_obj = message.get("body", {})
-    msg_type = body_obj.get("type", "")
+    msg_type = body_obj.get("type", "text")
+    message_text = ""
+    message_source = "text"
 
     if msg_type == "text":
         message_text = body_obj.get("text", {}).get("text", "")
+    elif msg_type == "audio":
+        audio_url = body_obj.get("audio", {}).get("url", "")
+        if not audio_url:
+            logger.warning("Audio message received but no URL found")
+            return {"status": "error", "reason": "no_audio_url"}
+        
+        # Optional: acknowledge voice note receipt
+        if settings.VOICE_NOTE_ACKNOWLEDGE and settings.VOICE_NOTE_ACK_MESSAGE:
+            await send_message(sender_phone, settings.VOICE_NOTE_ACK_MESSAGE)
+        
+        # Transcribe
+        message_text = await process_voice_note(audio_url)
+        message_source = "audio"
+
+        if not message_text:
+            if settings.VOICE_NOTE_ACKNOWLEDGE:
+                await send_message(sender_phone, "Sorry, I had trouble hearing that voice note. Mind typing it out for me?")
+            return {"status": "error", "reason": "transcription_failed"}
+
+    elif msg_type == "file":
+        # Handle Bird (new API) format where audio comes as file type
+        files = body_obj.get("file", {}).get("files", [])
+        audio_file = None
+        for f in files:
+            content_type = f.get("contentType", "")
+            if content_type and content_type.startswith("audio/"):
+                audio_file = f
+                break
+        
+        if audio_file:
+            audio_url = audio_file.get("mediaUrl", "") or audio_file.get("url", "")
+            if audio_url:
+                # Optional: acknowledge
+                if settings.VOICE_NOTE_ACKNOWLEDGE and settings.VOICE_NOTE_ACK_MESSAGE:
+                    await send_message(sender_phone, settings.VOICE_NOTE_ACK_MESSAGE)
+                
+                message_text = await process_voice_note(audio_url)
+                message_source = "audio"
+                if not message_text:
+                    if settings.VOICE_NOTE_ACKNOWLEDGE:
+                        await send_message(sender_phone, "Sorry, I had trouble hearing that voice note. Mind typing it out for me?")
+                    return {"status": "error", "reason": "transcription_failed"}
+            else:
+                return {"status": "ignored", "reason": "no_audio_url_in_file"}
+        else:
+            logger.info("Received non-audio file message, ignoring")
+            return {"status": "ignored", "reason": "unsupported_file_type"}
+
     elif msg_type == "":
         # Fallback: try reading text directly (some older Bird formats)
         message_text = message.get("text", {}).get("text", "") or message.get("content", {}).get("text", "")
@@ -124,6 +176,10 @@ async def bird_webhook(request: Request, background_tasks: BackgroundTasks):
     await redis_client.buffer_message(sender_phone, message_text)
     await redis_client.set_buffer_timer(sender_phone)
 
+    # Note: Currently buffer doesn't track source per fragment. 
+    # If a voice note is part of a buffered sequence, it will be treated as text in combined.
+    # We pass 'source' to process_conversation if we called it directly, 
+    # but here it goes to buffer. For now, we'll just let it be.
     background_tasks.add_task(_buffer_timeout_handler, sender_phone)
 
     return {"status": "ok"}

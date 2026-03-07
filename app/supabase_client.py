@@ -23,13 +23,14 @@ class SupabaseClient:
         }).eq("phone", phone).execute()
         return data[1][0] if data[1] else {}
 
-    async def log_message(self, phone: str, direction: str, body: str, state: str) -> Dict[str, Any]:
+    async def log_message(self, phone: str, direction: str, body: str, state: str, source: str = "text") -> Dict[str, Any]:
         """Inserts into messages table."""
         data, count = self.client.table("messages").insert({
             "lead_phone": phone,
             "direction": direction,
             "body": body,
-            "state": state
+            "state": state,
+            "source": source
         }).execute()
         return data[1][0] if data[1] else {}
 
