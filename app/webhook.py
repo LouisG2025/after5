@@ -14,6 +14,7 @@ router = APIRouter()
 
 async def _buffer_timeout_handler(phone: str, last_message_id: str = ""):
     """Waits for input buffer to expire, then processes combined message."""
+    print(f"[Webhook] _buffer_timeout_handler started for {phone}", flush=True)
     # Simulation: Someone "opens" the notification after a short delay
     if last_message_id and settings.MARK_AS_READ_DELAY > 0:
         await asyncio.sleep(settings.MARK_AS_READ_DELAY)
@@ -28,8 +29,11 @@ async def _buffer_timeout_handler(phone: str, last_message_id: str = ""):
     messages = await redis_client.get_and_clear_buffer(phone)
     if messages:
         combined_message = " ".join(messages)
+        print(f"[Webhook] Processing combined message for {phone}: '{combined_message[:50]}...'", flush=True)
         # Use 'mixed' if any message was audio, but for simple buffer just default to text or pass from first
         await process_conversation(phone, combined_message)
+    else:
+        print(f"[Webhook] No buffered messages for {phone}", flush=True)
 
 
 @router.post("/webhook")
