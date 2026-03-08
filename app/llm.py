@@ -14,8 +14,14 @@ class LLMClient:
         self.api_key = settings.OPENROUTER_API_KEY
         self.helicone_key = settings.HELICONE_API_KEY
 
-    def _get_client(self, lead_id: str, conversation_state: str, phone: str = "", company: str = "") -> AsyncOpenAI:
+    def _get_client(self, lead_id: Optional[str], conversation_state: str, phone: str = "", company: str = "") -> AsyncOpenAI:
         """Helper to create a Helicone-instrumented OpenAI client."""
+        # Coerce None values to empty strings — HTTP headers cannot be None
+        safe_lead_id = lead_id or ""
+        safe_phone = phone or ""
+        safe_company = company or ""
+        safe_state = conversation_state or "Opening"
+
         headers = {
             "HTTP-Referer": "https://after5.digital",
             "X-Title": "Albert by After5",
@@ -24,12 +30,12 @@ class LLMClient:
         if self.helicone_key:
             headers.update({
                 "Helicone-Auth": f"Bearer {self.helicone_key}",
-                "Helicone-User-Id": lead_id,
-                "Helicone-Session-Id": f"conv_{lead_id}",
-                "Helicone-Property-Lead-Id": lead_id,
-                "Helicone-Property-Phone": phone,
-                "Helicone-Property-Company": company,
-                "Helicone-Property-State": conversation_state,
+                "Helicone-User-Id": safe_lead_id,
+                "Helicone-Session-Id": f"conv_{safe_lead_id}",
+                "Helicone-Property-Lead-Id": safe_lead_id,
+                "Helicone-Property-Phone": safe_phone,
+                "Helicone-Property-Company": safe_company,
+                "Helicone-Property-State": safe_state,
                 "Helicone-Property-Agent": "Albert",
                 "Helicone-Property-Platform": "After5",
             })
