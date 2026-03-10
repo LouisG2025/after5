@@ -170,7 +170,7 @@ class AlbertTracker:
             if bant_timeline is not None:
                 payload["bant_timeline"] = bant_timeline
 
-            supabase.table("conversation_state").upsert(payload).execute()
+            supabase.table("conversation_state").upsert(payload, on_conflict="lead_id").execute()
         except Exception as e:
             print(f"[Albert Tracker Error] update_state: {e}")
 
@@ -256,7 +256,7 @@ class AlbertTracker:
                 "current_state": "Opening",
                 "message_count": 0,
                 "last_active_at": datetime.now(timezone.utc).isoformat(),
-            }).execute()
+            }, on_conflict="lead_id").execute()
         except Exception as e:
             print(f"[Albert Tracker Error] _init_conversation_state: {e}")
 
