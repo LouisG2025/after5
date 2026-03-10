@@ -1,6 +1,7 @@
 import json
 import logging
 import asyncio
+from datetime import datetime
 from fastapi import APIRouter, Request, BackgroundTasks
 from app.config import settings
 from app.redis_client import redis_client
@@ -34,6 +35,11 @@ async def _buffer_timeout_handler(phone: str, last_message_id: str = ""):
         await process_conversation(phone, combined_message)
     else:
         print(f"[Webhook] No buffered messages for {phone}", flush=True)
+
+
+@router.get("/webhook")
+async def test_webhook():
+    return {"status": "reachable", "time": datetime.now().isoformat()}
 
 
 @router.post("/webhook")
