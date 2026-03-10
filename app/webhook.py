@@ -38,176 +38,108 @@ async def _buffer_timeout_handler(phone: str, last_message_id: str = ""):
 
 @router.post("/webhook")
 async def bird_webhook(request: Request, background_tasks: BackgroundTasks):
-    """
-    Receives Bird (formerly MessageBird) Channels webhook (JSON).
-
-    Bird webhook payload for whatsapp.inbound:
-    {
-      "event": "whatsapp.inbound",
-      "message": {
-        "id": "...",
-        "channelId": "...",
-        "direction": "incoming",        <- may or may not be present
-        "sender": {
-          "contact": {
-            "id": "...",
-            "identifierKey": "phonenumber",
-            "identifierValue": "+918160178327"
-          }
-        },
-        "body": {
-          "type": "text",
-          "text": { "text": "Hello" }
-        }
-      }
-    }
-    """
     try:
-        payload = await request.json()
-    except Exception:
-        logger.warning("Webhook: non-JSON body received")
-        return {"status": "error", "reason": "invalid_json"}
+        try:
+            payload = await request.json()
+        except Exception:
+            logger.warning("Webhook: non-JSON body received")
+            return {"status": "error", "reason": "invalid_json"}
 
-    # Temporarily log at WARNING so it shows in Railway logs for debugging
-    logger.warning("Bird webhook payload: %s", json.dumps(payload)[:800])
+        # Temporarily log at WARNING so it shows in Railway logs for debugging
+        logger.warning("Bird webhook payload: %s", json.dumps(payload)[:1000])
 
-    event = payload.get("event", payload.get("type", ""))
-    logger.info("Bird webhook event: %s", event)
+        event = payload.get("event", payload.get("type", ""))
+        logger.info("Bird webhook event: %s", event)
 
-    # Only handle inbound events (we registered specifically for whatsapp.inbound)
-    # Also accept empty event string as fallback since we only subscribed to inbound
-    if event and not event.endswith(".inbound"):
-        logger.info("Ignoring non-inbound event: %s", event)
-        return {"status": "ignored", "reason": f"event:{event}"}
+        if event and not event.endswith(".inbound"):
+            logger.info("Ignoring non-inbound event: %s", event)
+            return {"status": "ignored", "reason": f"event:{event}"}
 
-    # Bird Channels API: message is nested under "payload" key
-    # Structure: {"service": "channels", "event": "whatsapp.inbound", "payload": {...}}
-    message = payload.get("payload", payload)  # fallback to root if no "payload" key
+        message = payload.get("payload", payload)
+        message_id = message.get("id", "")
 
-    message_id = message.get("id", "")
+        # ── Extract sender phone ────────────────────────────────────────────────
+        sender_obj  = message.get("sender", {})
+        contact_obj = sender_obj.get("contact", {})
+        identifier  = contact_obj.get("identifierValue", "")
+        contact_id  = contact_obj.get("id", "")
 
-    # ── Extract sender phone ────────────────────────────────────────────────
-    # Bird sends: message.sender.contact.identifierValue
-    sender_obj  = message.get("sender", {})
-    contact_obj = sender_obj.get("contact", {})
-    identifier  = contact_obj.get("identifierValue", "")
-    contact_id  = contact_obj.get("id", "")
+        sender_phone = None
+        if identifier:
+            sender_phone = _to_internal_phone(identifier)
+            logger.info("Phone from identifierValue: %s", sender_phone)
+        elif contact_id:
+            sender_phone = await get_contact_phone(contact_id)
+            logger.info("Phone from Contacts API: %s", sender_phone)
 
-    sender_phone = None
-    if identifier:
-        sender_phone = _to_internal_phone(identifier)
-        logger.info("Phone from identifierValue: %s", sender_phone)
-    elif contact_id:
-        sender_phone = await get_contact_phone(contact_id)
-        logger.info("Phone from Contacts API: %s", sender_phone)
+        if not sender_phone:
+            sender_phone = contact_obj.get("key")
+            if sender_phone:
+                sender_phone = _to_internal_phone(sender_phone)
+                logger.info("Phone from contact.key fallback: %s", sender_phone)
 
-    # Fallback for some Bird v2 formats where phone is in contact.key
-    if not sender_phone:
-        sender_phone = contact_obj.get("key")
-        if sender_phone:
-            sender_phone = _to_internal_phone(sender_phone)
-            logger.info("Phone from contact.key fallback: %s", sender_phone)
+        if not sender_phone:
+            logger.error("Could not resolve phone. Full message payload: %s", json.dumps(message))
+            return {"status": "error", "reason": "phone_resolution_failed"}
 
-    if not sender_phone:
-        logger.error(
-            "Could not resolve phone. Full message payload: %s",
-            json.dumps(message)
-        )
-        return {"status": "error", "reason": "phone_resolution_failed"}
+        # ── Extract message text ────────────────────────────────────────────────
+        body_obj = message.get("body", {})
+        msg_type = body_obj.get("type", "text")
+        message_text = ""
 
-    # ── Extract message text ────────────────────────────────────────────────
-    body_obj = message.get("body", {})
-    msg_type = body_obj.get("type", "text")
-    message_text = ""
-    message_source = "text"
-
-    if msg_type == "text":
-        message_text = body_obj.get("text", {}).get("text", "")
-    elif msg_type == "audio":
-        audio_url = body_obj.get("audio", {}).get("url", "")
-        if not audio_url:
-            logger.warning("Audio message received but no URL found")
-            return {"status": "error", "reason": "no_audio_url"}
-        
-        # Optional: acknowledge voice note receipt
-        if settings.VOICE_NOTE_ACKNOWLEDGE and settings.VOICE_NOTE_ACK_MESSAGE:
-            await send_message(sender_phone, settings.VOICE_NOTE_ACK_MESSAGE)
-        
-        # Transcribe
-        message_text = await process_voice_note(audio_url)
-        message_source = "audio"
+        if msg_type == "text":
+            message_text = body_obj.get("text", {}).get("text", "")
+        elif msg_type == "audio":
+            audio_url = body_obj.get("audio", {}).get("url", "")
+            if audio_url:
+                message_text = await process_voice_note(audio_url)
+        elif msg_type == "file":
+            files = body_obj.get("file", {}).get("files", [])
+            for f in files:
+                if f.get("contentType", "").startswith("audio/"):
+                    audio_url = f.get("mediaUrl", "") or f.get("url", "")
+                    if audio_url:
+                        message_text = await process_voice_note(audio_url)
+                    break
+        elif msg_type == "":
+            message_text = message.get("text", {}).get("text", "") or message.get("content", {}).get("text", "")
 
         if not message_text:
-            if settings.VOICE_NOTE_ACKNOWLEDGE:
-                await send_message(sender_phone, "Sorry, I had trouble hearing that voice note. Mind typing it out for me?")
-            return {"status": "error", "reason": "transcription_failed"}
+            logger.warning("Empty/Unsupported message body from %s", sender_phone)
+            return {"status": "ignored", "reason": "empty_body"}
 
-    elif msg_type == "file":
-        # Handle Bird (new API) format where audio comes as file type
-        files = body_obj.get("file", {}).get("files", [])
-        audio_file = None
-        for f in files:
-            content_type = f.get("contentType", "")
-            if content_type and content_type.startswith("audio/"):
-                audio_file = f
-                break
+        # ── Redis Check ─────────────────────────────────────────────────────────
+        logger.info("[Webhook] Redis ping check...")
+        if not await redis_client.ping():
+            logger.error("[Webhook] ❌ Redis is DOWN. Cannot buffer message.")
+
+        if message_id and await redis_client.check_dedup(message_id):
+            logger.info("Duplicate message %s, ignoring", message_id)
+            return {"status": "ignored", "reason": "duplicate"}
+
+        # ── Tracking ────────────────────────────────────────────────────────────
+        try:
+            from app.tracker import AlbertTracker
+            tracker = AlbertTracker()
+            lead = tracker.get_lead_by_phone(sender_phone)
+            if not lead:
+                lead = tracker.create_lead(phone=sender_phone)
+            if lead:
+                tracker.log_inbound(lead["id"], message_text)
+                logger.info("[Webhook] ✅ Tracked inbound for lead %s", lead["id"])
+        except Exception as e:
+            logger.error("[Webhook] ❌ Tracker failed: %s", e)
+
+        # ── Buffer + schedule ───────────────────────────────────────────────────
+        logger.info("[Webhook] Buffering message for %s...", sender_phone)
+        await redis_client.buffer_message(sender_phone, message_text)
+        await redis_client.set_buffer_timer(sender_phone)
         
-        if audio_file:
-            audio_url = audio_file.get("mediaUrl", "") or audio_file.get("url", "")
-            if audio_url:
-                # Optional: acknowledge
-                if settings.VOICE_NOTE_ACKNOWLEDGE and settings.VOICE_NOTE_ACK_MESSAGE:
-                    await send_message(sender_phone, settings.VOICE_NOTE_ACK_MESSAGE)
-                
-                message_text = await process_voice_note(audio_url)
-                message_source = "audio"
-                if not message_text:
-                    if settings.VOICE_NOTE_ACKNOWLEDGE:
-                        await send_message(sender_phone, "Sorry, I had trouble hearing that voice note. Mind typing it out for me?")
-                    return {"status": "error", "reason": "transcription_failed"}
-            else:
-                return {"status": "ignored", "reason": "no_audio_url_in_file"}
-        else:
-            logger.info("Received non-audio file message, ignoring")
-            return {"status": "ignored", "reason": "unsupported_file_type"}
+        logger.info("[Webhook] Scheduling _buffer_timeout_handler for %s", sender_phone)
+        background_tasks.add_task(_buffer_timeout_handler, sender_phone, message_id)
 
-    elif msg_type == "":
-        # Fallback: try reading text directly (some older Bird formats)
-        message_text = message.get("text", {}).get("text", "") or message.get("content", {}).get("text", "")
-    else:
-        logger.info("Unsupported message type: %s", msg_type)
-        return {"status": "ignored", "reason": f"unsupported_type:{msg_type}"}
+        return {"status": "ok"}
 
-    if not message_text:
-        logger.warning("Empty message body from %s", sender_phone)
-        return {"status": "ignored", "reason": "empty_body"}
-
-    # ── Deduplication ───────────────────────────────────────────────────────
-    if message_id and await redis_client.check_dedup(message_id):
-        logger.info("Duplicate message %s, ignoring", message_id)
-        return {"status": "ignored", "reason": "duplicate"}
-
-    # ── Tracking ────────────────────────────────────────────────────────────
-    from app.tracker import AlbertTracker
-    tracker = AlbertTracker()
-    
-    lead = tracker.get_lead_by_phone(sender_phone)
-    if not lead:
-        lead = tracker.create_lead(phone=sender_phone)
-    
-    if lead:
-        tracker.log_inbound(lead["id"], message_text)
-
-    logger.info("Bird inbound from %s: %.80s…", sender_phone, message_text)
-
-    # ── Buffer + schedule ───────────────────────────────────────────────────
-    await redis_client.buffer_message(sender_phone, message_text)
-    await redis_client.set_buffer_timer(sender_phone)
-
-    # Note: Currently buffer doesn't track source per fragment. 
-    # If a voice note is part of a buffered sequence, it will be treated as text in combined.
-    # We pass 'source' to process_conversation if we called it directly, 
-    # but here it goes to buffer. For now, we'll just let it be.
-    background_tasks.add_task(_buffer_timeout_handler, sender_phone, message_id)
-
-    return {"status": "ok"}
+    except Exception as e:
+        logger.critical("[Webhook] 🚨 CRITICAL WEBHOOK FAILURE: %s", e, exc_info=True)
+        return {"status": "error", "reason": str(e)}
