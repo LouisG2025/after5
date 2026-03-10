@@ -91,55 +91,43 @@ async def send_message(to: str, body: str) -> dict | None:
         return None
 
 
-async def mark_as_read(message_id: str) -> bool:
+async def mark_as_read(conversation_id: str, message_id: str) -> bool:
     """
-    Mark a WhatsApp message as read via Bird Channels API.
-    Note: Returns False silently on 403 Forbidden (common permission issue).
+    Mark a WhatsApp message as read via Bird Conversations API.
     """
-    if not message_id:
+    if not conversation_id or not message_id:
         return False
         
     payload = {"status": "read"}
     
     try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            url = f"{BASE_URL}/workspaces/{settings.MESSAGEBIRD_WORKSPACE_ID}/conversations/{conversation_id}/messages/{message_id}"
             response = await client.patch(
-                _workspace_channel_url(f"/messages/{message_id}"),
+                url,
                 headers=_get_headers(),
                 json=payload,
             )
-            if response.status_code in (200, 204):
-                logger.debug("Bird: message %s marked as read", message_id)
+            if response.status_code in (200, 204, 202):
+                logger.info("Bird: message %s marked as read", message_id)
                 return True
             if response.status_code == 403:
-                # Permission forbidden — skip silently to avoid log noise
+                logger.warning("Bird mark_as_read: 403 Forbidden. Check API key permissions for conversation.write")
                 return False
             logger.warning("Bird mark_as_read failed: %s — %s", response.status_code, response.text)
             return False
     except Exception as exc:
-        logger.warning("Bird mark_as_read error: %s", exc)
+        logger.error("Bird mark_as_read error: %s", exc)
         return False
 
 
 async def send_typing_indicator(to: str, conversation_id: str = "") -> bool:
     """
-    Experimental: Try to send a 'typing' status via Bird Channels API.
-    If conversation_id is provided, tries to use the conversations endpoint.
-    Otherwise, it's just a simulation.
+    Simulated typing indicator. 
+    Bird Channels API v2 currently doesn't support a dedicated 'typing' endpoint for WhatsApp.
+    We simulate this by adding human-like delays in conversation.py.
     """
-    if not conversation_id:
-        # Fallback to simulation if no ID
-        return True
-        
-    try:
-        url = f"{BASE_URL}/workspaces/{settings.MESSAGEBIRD_WORKSPACE_ID}/channels/{settings.MESSAGEBIRD_CHANNEL_ID}/conversations/{conversation_id}/typing"
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            # Note: This is an experimental guess at the Bird typing endpoint
-            response = await client.post(url, headers=_get_headers())
-            return response.status_code in (200, 201, 204)
-    except Exception as exc:
-        logger.debug("Bird typing indicator error: %s", exc)
-        return False
+    return True
 
 
 async def reply_to_conversation(conversation_id: str, body: str) -> dict | None:

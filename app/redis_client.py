@@ -1,4 +1,5 @@
 import json
+import time
 import redis.asyncio as redis
 from app.config import settings
 from typing import Optional, List, Dict, Any
@@ -35,8 +36,9 @@ class RedisClient:
         try:
             session = await self.get_session(phone)
             if not session:
+                from app.models import ConversationState
                 session = {
-                    "state": "opening",
+                    "state": ConversationState.OPENING,
                     "history": [],
                     "turn_count": 0,
                     "lead_data": {}
@@ -61,10 +63,17 @@ class RedisClient:
             return False
 
     async def buffer_message(self, phone: str, message: str):
-        """Adds message to input buffer list."""
+        """Adds message to input buffer list and tracks first message time."""
         try:
-            await self.redis.rpush(f"buffer:{phone}", message)
-            await self.redis.expire(f"buffer:{phone}", 60)
+            key = f"buffer:{phone}"
+            first_key = f"buffer_first:{phone}"
+            
+            await self.redis.rpush(key, message)
+            await self.redis.expire(key, 60)
+            
+            if not await self.redis.exists(first_key):
+                await self.redis.set(first_key, str(time.time()), ex=60)
+                
             print(f"[Redis] ✅ Buffered message for {phone}", flush=True)
         except Exception as e:
             print(f"[Redis] ❌ buffer_message failed for {phone}: {e}", flush=True)
@@ -72,26 +81,59 @@ class RedisClient:
     async def get_and_clear_buffer(self, phone: str) -> List[str]:
         """Returns all buffered messages and clears the buffer."""
         try:
-            messages = await self.redis.lrange(f"buffer:{phone}", 0, -1)
-            await self.redis.delete(f"buffer:{phone}")
+            key = f"buffer:{phone}"
+            first_key = f"buffer_first:{phone}"
+            
+            messages = await self.redis.lrange(key, 0, -1)
+            await self.redis.delete(key)
+            await self.redis.delete(first_key)
             return messages
         except Exception as e:
             print(f"[Redis] ❌ get_and_clear_buffer failed for {phone}: {e}", flush=True)
             return []
 
-    async def set_buffer_timer(self, phone: str):
-        """Sets a key with 3-second TTL to track buffer window."""
+    async def should_process_buffer(self, phone: str) -> bool:
+        """
+        Check if we should process the buffer now.
+        Returns True if 8 seconds have passed since the first message (hard max).
+        """
         try:
-            await self.redis.set(f"timer:{phone}", "1", ex=settings.INPUT_BUFFER_SECONDS)
-            print(f"[Redis] ✅ Timer set for {phone}", flush=True)
-        except Exception as e:
-            print(f"[Redis] ❌ set_buffer_timer failed for {phone}: {e}", flush=True)
-
-    async def is_timer_active(self, phone: str) -> bool:
-        try:
-            return await self.redis.exists(f"timer:{phone}") > 0
-        except Exception as e:
-            print(f"[Redis] ❌ is_timer_active failed for {phone}: {e}", flush=True)
+            first_key = f"buffer_first:{phone}"
+            first_ts = await self.redis.get(first_key)
+            
+            if not first_ts:
+                return False
+            
+            first_time = float(first_ts)
+            now = time.time()
+            
+            if now - first_time >= settings.INPUT_BUFFER_MAX_SECONDS:
+                return True
+            
             return False
+        except Exception as e:
+            print(f"[Redis] ❌ should_process_buffer failed for {phone}: {e}", flush=True)
+            return False
+
+    async def set_batch_id(self, phone: str, batch_id: str):
+        await self.redis.set(f"batch:{phone}", batch_id, ex=60)
+
+    async def get_batch_id(self, phone: str) -> Optional[str]:
+        return await self.redis.get(f"batch:{phone}")
+
+    async def is_processing(self, phone: str) -> bool:
+        return await self.redis.exists(f"processing:{phone}") > 0
+
+    async def set_processing(self, phone: str, active: bool = True):
+        if active:
+            await self.redis.set(f"processing:{phone}", "1", ex=60)
+        else:
+            await self.redis.delete(f"processing:{phone}")
+
+    async def has_sent_calendly(self, phone: str) -> bool:
+        return await self.redis.exists(f"calendly_sent:{phone}") > 0
+
+    async def mark_calendly_sent(self, phone: str):
+        await self.redis.set(f"calendly_sent:{phone}", "1", ex=86400 * 7)
 
 redis_client = RedisClient()

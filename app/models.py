@@ -10,6 +10,7 @@ class ConversationState(str, Enum):
     BOOKING = "booking"
     ESCALATION = "escalation"
     CONFIRMED = "confirmed"
+    WAITING = "waiting"
     CLOSED = "closed"
 
 class LeadCreate(BaseModel):

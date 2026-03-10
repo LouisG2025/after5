@@ -1,15 +1,16 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from functools import lru_cache
+import os
 
 class Settings(BaseSettings):
     # MessageBird / Bird
-    MESSAGEBIRD_API_KEY: str
-    MESSAGEBIRD_WORKSPACE_ID: str
+    MESSAGEBIRD_API_KEY: str = os.getenv("MESSAGEBIRD_API_KEY", "")
+    MESSAGEBIRD_WORKSPACE_ID: str = os.getenv("MESSAGEBIRD_WORKSPACE_ID", "")
     MESSAGEBIRD_CHANNEL_ID: str
     MESSAGEBIRD_WHATSAPP_NUMBER: str = ""  # for reference only
 
     # OpenRouter
-    OPENROUTER_API_KEY: str
+    OPENROUTER_API_KEY: str = os.getenv("OPENROUTER_API_KEY", "")
     OPENROUTER_PRIMARY_MODEL: str = "anthropic/claude-3.5-sonnet"
     OPENROUTER_FALLBACK_MODEL: str = "openai/gpt-4o-mini"
     OPENROUTER_BANT_MODEL: str = "openai/gpt-4o-mini"
@@ -34,6 +35,8 @@ class Settings(BaseSettings):
     TYPING_DELAY_PER_CHAR: float = 0.03
     CHUNK_DELAY_SECONDS: float = 1.5
     MAX_FOLLOWUPS: int = 2
+    INPUT_BUFFER_MAX_SECONDS: float = 8.0
+    LOW_CONTENT_THRESHOLD: int = 3
 
     # OpenAI / Whisper
     OPENAI_API_KEY: str = ""

@@ -8,7 +8,7 @@ from app.models import ConversationState
 
 router = APIRouter()
 
-async def send_initial_outreach(name: str, phone: str, company: str):
+async def send_initial_outreach(name: str, phone: str, company: str, form_data: dict = None):
     """Sends the first outbound message after a delay."""
     from app.tracker import AlbertTracker
     tracker = AlbertTracker()
@@ -23,12 +23,13 @@ async def send_initial_outreach(name: str, phone: str, company: str):
     # 2. Start outreach sequence
     await asyncio.sleep(30)
     
-    # 3. Initialize session
+    # 3. Initialize session with full form data if available
+    # Form leads bypass OPENING and go straight to DISCOVERY
     session = {
-        "state": ConversationState.OPENING,
+        "state": ConversationState.DISCOVERY if form_data else ConversationState.OPENING,
         "history": [],
         "turn_count": 0,
-        "lead_data": lead
+        "lead_data": {**(lead or {}), **(form_data or {})}
     }
     await redis_client.save_session(phone, session)
     
@@ -45,21 +46,18 @@ async def send_initial_outreach(name: str, phone: str, company: str):
 
 @router.post("/send-outbound")
 async def send_outbound(lead: LeadCreate, background_tasks: BackgroundTasks = None):
-    # If BackgroundTasks not provided directly (e.g. from FastAPI route), 
-    # we can use a local one or just run it. 
-    # But usually it's passed.
     asyncio.create_task(send_initial_outreach(lead.name, lead.phone, lead.company))
     return {"status": "outreach_scheduled"}
 
 @router.post("/form-webhook")
 async def form_webhook(payload: dict):
     """Endpoint for n8n/website form submissions."""
-    name = payload.get("name")
+    name = payload.get("first_name") or payload.get("name")
     phone = payload.get("phone")
-    company = payload.get("company")
+    company = payload.get("company", "your business")
     
     if not name or not phone:
         return {"error": "name and phone required"}
         
-    asyncio.create_task(send_initial_outreach(name, phone, company))
+    asyncio.create_task(send_initial_outreach(name, phone, company, payload))
     return {"status": "outreach_scheduled"}

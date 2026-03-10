@@ -50,6 +50,9 @@ def check_transition(current_state: ConversationState, session_data: Dict[str, A
     if current_state == ConversationState.QUALIFICATION:
         # Qualification to Booking if BANT score >= 7
         if overall_score >= 7:
-            return rule["next"]
+            return ConversationState.BOOKING
 
+    # Special handling for WAITING/CLOSED is usually manual or triggered by content
+    # but we can return the current state as standard.
+    
     return None
