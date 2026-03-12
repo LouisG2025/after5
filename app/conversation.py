@@ -31,9 +31,14 @@ async def process_conversation(phone: str, message: str, conversation_id: str = 
             from app.messaging import mark_as_read
             await mark_as_read(conversation_id, message_id)
 
-        # Step 2: Set processing flag and wait 3-5 seconds
+        # Step 2: Simulate READING time based on incoming message length
+        from app.chunker import calculate_reading_delay
+        reading_delay = calculate_reading_delay(message)
+        print(f"[Conversation] 📖 Reading simulation for {phone}: {reading_delay:.1f}s", flush=True)
+        await asyncio.sleep(reading_delay)
+
+        # Step 3: Set processing flag
         await redis_client.set_processing(phone, True)
-        await asyncio.sleep(random.uniform(3, 5))
 
         # Step 3: Get session and lead data
         session = await redis_client.get_session(phone)
@@ -57,8 +62,8 @@ async def process_conversation(phone: str, message: str, conversation_id: str = 
         if is_spam:
             return
 
-        # Step 5: Simulate thinking with typing indicator
-        print(f"[Conversation] 💭 Sending typing indicator to {phone}", flush=True)
+        # Step 5: Start Typing Indicator (Simulates "Writing...")
+        print(f"[Conversation] ✍️ Starting typing simulation for {phone}", flush=True)
         await send_typing_indicator(phone, conversation_id, message_id)
 
         # Step 6: LLM Call
@@ -90,11 +95,14 @@ async def process_conversation(phone: str, message: str, conversation_id: str = 
         # Step 8: Calendly Once-Only Check
         response_text = await check_and_send_calendly(phone, response_text)
 
-        # Step 9: Chunk and send response
+        # Step 9: Chunk and simulate TYPING speed based on response length
         chunks = chunk_message(response_text)
         if chunks:
-            initial_delay = calculate_typing_delay(chunks[0][:100])
-            await asyncio.sleep(initial_delay)
+            # Dynamic Typing Delay for the first chunk (how long it took to "write" it)
+            typing_delay = calculate_typing_delay(response_text)
+            print(f"[Conversation] ⌨️ Typing simulation for {phone}: {typing_delay:.1f}s", flush=True)
+            await asyncio.sleep(typing_delay)
+            
             print(f"[Conversation] 📤 Sending {len(chunks)} chunks to {phone}", flush=True)
             await send_chunked_messages(phone, chunks, conversation_id)
 

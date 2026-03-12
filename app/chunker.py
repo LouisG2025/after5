@@ -37,14 +37,25 @@ def calculate_typing_delay(text: str) -> float:
     Returns a realistic typing delay (in seconds) based on character count.
     Used for simulating a human typing on WhatsApp.
     """
-    # Avg: 200 CPM (chars per minute) = ~3.3 chars per second
-    # We use a slightly faster 8 chars/sec to keep UX snappy
-    delay = len(text) / 8.0
-    # Cap delay at 4 seconds per message
-    return min(delay, 4.0)
+    # Use variable speed from logic or settings
+    # Natural: 12 chars per second
+    delay = len(text) / 12.0
+    # Cap delay at 8 seconds per message
+    return min(max(2.0, delay), 8.0)
+
+def calculate_reading_delay(text: str) -> float:
+    """
+    Returns a realistic reading delay based on incoming message length.
+    Avg human reads ~25 chars per second.
+    """
+    if not text:
+        return 1.0
+    delay = len(text) / 25.0
+    return max(1.0, delay)
 
 def calculate_thinking_delay() -> float:
     """
-    Returns a random thinking delay for the FIRST chunk.
+    Returns a random thinking delay for legacy support, 
+    but we now prefer reading_delay + typing_delay.
     """
-    return random.uniform(3.0, 5.0)
+    return random.uniform(2.0, 4.0)
