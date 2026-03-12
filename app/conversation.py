@@ -22,6 +22,7 @@ import random
 async def process_conversation(phone: str, message: str, conversation_id: str = "", message_id: str = ""):
     """Main conversation engine logic."""
     try:
+        print(f"\n[Conversation] 🚀 Starting process for {phone}: '{message[:50]}...'", flush=True)
         logger.info("\n[Conversation] 🚀 Starting process for %s: '%s...'", phone, message[:50])
 
         # Step 1: Wait 5 seconds, then send read receipt (blue ticks)
@@ -57,6 +58,7 @@ async def process_conversation(phone: str, message: str, conversation_id: str = 
             return
 
         # Step 5: Simulate thinking with typing indicator
+        print(f"[Conversation] 💭 Sending typing indicator to {phone}", flush=True)
         await send_typing_indicator(phone, conversation_id)
 
         # Step 6: LLM Call
@@ -69,6 +71,7 @@ async def process_conversation(phone: str, message: str, conversation_id: str = 
             phone=phone,
             company=lead_data.get("company", "")
         )
+        print(f"[Conversation] 🤖 LLM Response generated for {phone}", flush=True)
         
         if not response_text:
             await redis_client.set_processing(phone, False)
@@ -92,6 +95,7 @@ async def process_conversation(phone: str, message: str, conversation_id: str = 
         if chunks:
             initial_delay = calculate_typing_delay(chunks[0][:100])
             await asyncio.sleep(initial_delay)
+            print(f"[Conversation] 📤 Sending {len(chunks)} chunks to {phone}", flush=True)
             await send_chunked_messages(phone, chunks, conversation_id)
 
         # Step 10: Update session history and turn count

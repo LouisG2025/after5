@@ -54,6 +54,7 @@ async def send_message(to: str, body: str) -> dict | None:
 
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
+            print(f"WhatsApp Cloud: sending to {cloud_phone}", flush=True)
             logger.info("WhatsApp Cloud: sending to %s", cloud_phone)
             response = await client.post(
                 url,
@@ -121,6 +122,7 @@ async def send_typing_indicator(to: str) -> bool:
     
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
+            print(f"WhatsApp Cloud: typing indicator to {cloud_phone}", flush=True)
             response = await client.post(
                 url,
                 headers=_get_headers(),
