@@ -107,10 +107,29 @@ async def mark_as_read(message_id: str) -> bool:
 
 async def send_typing_indicator(to: str) -> bool:
     """
-    WhatsApp Cloud API does not have a direct typing indicator for text messages 
-    in the same way. We simulate this with delays.
+    Send a typing indicator to the WhatsApp user.
     """
-    return True
+    cloud_phone = _to_cloud_phone(to)
+    url = f"{BASE_URL}/{settings.WHATSAPP_PHONE_NUMBER_ID}/messages"
+    
+    payload = {
+        "messaging_product": "whatsapp",
+        "recipient_type": "individual",
+        "to": cloud_phone,
+        "sender_action": "typing_on"
+    }
+    
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.post(
+                url,
+                headers=_get_headers(),
+                json=payload,
+            )
+            return response.status_code in (200, 204, 202)
+    except Exception as exc:
+        logger.error("WhatsApp Cloud typing indicator error: %s", exc)
+        return False
 
 async def send_chunked_messages(to: str, chunks: list[str], conversation_id: str = "") -> None:
     """
