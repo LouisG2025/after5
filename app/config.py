@@ -8,14 +8,14 @@ class Settings(BaseSettings):
     MESSAGEBIRD_WORKSPACE_ID: str = os.getenv("MESSAGEBIRD_WORKSPACE_ID", "")
     MESSAGEBIRD_CHANNEL_ID: str
     MESSAGEBIRD_WHATSAPP_NUMBER: str = ""  # for reference only
-11: 
-12:     # WhatsApp Cloud API (Meta)
-13:     WHATSAPP_PHONE_NUMBER_ID: str = ""
-14:     WHATSAPP_BUSINESS_ACCOUNT_ID: str = ""
-15:     WHATSAPP_ACCESS_TOKEN: str = ""
-16:     WHATSAPP_VERIFY_TOKEN: str = "after5_verify_token"
-17:     WHATSAPP_API_VERSION: str = "v22.0"
-18:     MESSAGING_PROVIDER: str = "messagebird" # "messagebird" or "whatsapp_cloud"
+
+    # WhatsApp Cloud API (Meta)
+    WHATSAPP_PHONE_NUMBER_ID: str = ""
+    WHATSAPP_BUSINESS_ACCOUNT_ID: str = ""
+    WHATSAPP_ACCESS_TOKEN: str = ""
+    WHATSAPP_VERIFY_TOKEN: str = "after5_verify_token"
+    WHATSAPP_API_VERSION: str = "v22.0"
+    MESSAGING_PROVIDER: str = "messagebird" # "messagebird" or "whatsapp_cloud"
 
     # OpenRouter
     OPENROUTER_API_KEY: str = os.getenv("OPENROUTER_API_KEY", "")
