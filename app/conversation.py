@@ -108,19 +108,11 @@ async def process_conversation(phone: str, message: str, conversation_id: str = 
         # Step 10: Calendly Once-Only Check
         response_text = await check_and_send_calendly(phone, response_text)
 
-        # Step 11: Send one coherent message (as requested in Section 1.3)
-        # We still use chunk_message for text cleaning (dashes, etc.)
+        # Step 11: Send chunks sequentially (Multi-bubble realism)
         chunks = chunk_message(response_text)
         if chunks:
-            full_response = "\n\n".join(chunks)
-            
-            # Dynamic Typing Delay based on response length
-            typing_delay = calculate_typing_delay(full_response)
-            print(f"[Conversation] ⌨️ Typing simulation for {phone}: {typing_delay:.1f}s", flush=True)
-            await asyncio.sleep(typing_delay)
-            
-            print(f"[Conversation] 📤 Sending coherent message to {phone}", flush=True)
-            await send_message(phone, full_response)
+            print(f"[Conversation] 📤 Sending {len(chunks)} chunks to {phone}", flush=True)
+            await send_chunked_messages(phone, chunks, conversation_id)
             if lead_id:
                 tracker.set_typing_status(lead_id, False)
 
