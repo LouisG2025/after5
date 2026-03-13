@@ -9,3 +9,4 @@ python-dotenv>=1.0.0
 python-multipart==0.0.9
 httpx>=0.25.0
 redis>=5.0.0
+pypdf>=4.0.0

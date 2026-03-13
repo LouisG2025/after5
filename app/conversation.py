@@ -72,8 +72,15 @@ async def process_conversation(phone: str, message: str, conversation_id: str = 
         if is_spam:
             return
 
-        # Step 8: LLM Call
-        messages = await build_enhanced_context(session, lead_data, message)
+        # Step 8: Knowledge Base Retrieval (RAG)
+        from app.knowledge import retrieve_knowledge
+        print(f"[Conversation] 🔍 Searching knowledge base for: {phone}", flush=True)
+        knowledge_context = await retrieve_knowledge(message)
+        if knowledge_context:
+            print(f"[Conversation] 📚 Found knowledge context for {phone}", flush=True)
+
+        # Step 9: LLM Call
+        messages = await build_enhanced_context(session, lead_data, message, knowledge_context)
         response_text = await llm_client.call_llm(
             messages,
             model=settings.OPENROUTER_PRIMARY_MODEL,
@@ -193,9 +200,9 @@ async def check_and_send_calendly(phone: str, text: str) -> str:
     return text
 
 
-async def build_enhanced_context(session: dict, lead_data: dict, message: str) -> list:
-    """Builds enhanced LLM context with BANT and Form data."""
-    messages = await llm_client.build_context(session, lead_data, message)
+async def build_enhanced_context(session: dict, lead_data: dict, message: str, knowledge_context: str = "") -> list:
+    """Builds enhanced LLM context with BANT, Form data and Knowledge base context."""
+    messages = await llm_client.build_context(session, lead_data, message, knowledge_context)
     
     # Extract existing system prompt to append/pre-pend if needed, 
     # but llm_client.build_context already reads system_prompt.txt.
