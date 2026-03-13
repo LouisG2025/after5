@@ -40,17 +40,7 @@ async def process_conversation(phone: str, message: str, conversation_id: str = 
         print(f"[Conversation] 📖 Reading simulation for {phone}: {reading_delay:.1f}s", flush=True)
         await asyncio.sleep(reading_delay)
 
-        # Step 4: Start Typing Indicator (Simulates "Writing...")
-        # We start this BEFORE LLM call so the user knows we are responding
-        print(f"[Conversation] ✍️ Starting typing simulation for {phone}", flush=True)
-        await send_typing_indicator(phone, conversation_id, message_id)
-        if lead_id:
-            tracker.set_typing_status(lead_id, True)
-
-        # Step 5: Set processing flag
-        await redis_client.set_processing(phone, True)
-
-        # Step 6: Get session and lead data
+        # Step 4: Get session and lead data
         session = await redis_client.get_session(phone)
         if not session:
             lead = tracker.get_lead_by_phone(phone)
@@ -66,6 +56,16 @@ async def process_conversation(phone: str, message: str, conversation_id: str = 
         
         lead_data = session.get("lead_data", {})
         lead_id = lead_data.get("id")
+
+        # Step 5: Start Typing Indicator (Simulates "Writing...")
+        # We start this BEFORE LLM call so the user knows we are responding
+        print(f"[Conversation] ✍️ Starting typing simulation for {phone}", flush=True)
+        await send_typing_indicator(phone, conversation_id, message_id)
+        if lead_id:
+            tracker.set_typing_status(lead_id, True)
+
+        # Step 6: Set processing flag
+        await redis_client.set_processing(phone, True)
 
         # Step 7: Check if message is low-content spam
         is_spam = await check_low_content(phone, message, session)
