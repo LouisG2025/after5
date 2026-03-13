@@ -8,87 +8,110 @@ sys.path.append(os.getcwd())
 from app.tracker import AlbertTracker
 from app.supabase_client import supabase_client
 
-def fetch_live_logs(phone: str, limit: int = 20, watch: bool = False):
-    print(f"📡 Connecting to Supabase for {phone}...")
+def fetch_live_logs(phones=None, limit=20, watch=False, monitor_all=False):
     tracker = AlbertTracker()
-    
-    try:
-        lead = tracker.get_lead_by_phone(phone)
-    except Exception as e:
-        print(f"❌ Connection error: {e}")
-        return
-    
-    if not lead:
-        print(f"❌ Lead with phone {phone} not found in Supabase.")
+    lead_map = {} # lead_id -> Name
+    lead_list = []
+
+    if monitor_all:
+        print("🌍 GLOBAL MONITOR MODE: Watching ALL active leads...")
+    else:
+        print(f"📡 Connecting to Supabase for {len(phones)} lead(s)...")
+        for p in phones:
+            try:
+                lead = tracker.get_lead_by_phone(p)
+                if lead:
+                    lead_id = lead["id"]
+                    name = f"{lead.get('first_name', '')} {lead.get('last_name', '')}".strip() or p
+                    lead_map[lead_id] = name
+                    lead_list.append(lead_id)
+                    print(f"✅ Found: {name}")
+                else:
+                    print(f"⚠️ Lead {p} not found.")
+            except Exception as e:
+                print(f"❌ Error finding {p}: {e}")
+
+    if not monitor_all and not lead_list:
+        print("❌ No valid leads to monitor.")
         return
 
-    lead_id = lead["id"]
-    print(f"✅ Monitoring: {lead.get('first_name', 'Unknown')} {lead.get('last_name', '')}")
-    print(f"📊 Signal Score: {lead.get('signal_score', 0)}/10 | Outcome: {lead.get('outcome', 'In Progress')}")
-    print("-" * 50)
-
+    print("-" * 60)
     last_seen_id = None
 
     def print_messages(msg_limit, reset=False):
         nonlocal last_seen_id
         try:
             query = supabase_client.client.table("messages")\
-                .select("*")\
-                .eq("lead_id", lead_id)\
+                .select("*, leads(first_name, last_name, phone)")\
                 .order("created_at", desc=True)\
                 .limit(msg_limit)
+            
+            if not monitor_all:
+                query = query.in_("lead_id", lead_list)
             
             result = query.execute()
             messages = result.data
             
             if not messages:
-                if reset: print("📭 No messages yet.")
+                if reset: print("📭 No messages found yet.")
                 return
 
             # Reverse to show chronological order
             new_msgs = []
             for msg in reversed(messages):
-                if last_seen_id is None or msg["id"] > last_seen_id:
+                # Ensure we have a string ID or timestamp for comparison
+                # Using 'id' if it exists, otherwise relying on polling window
+                msg_id = msg.get("id")
+                if last_seen_id is None or (msg_id and msg_id > last_seen_id):
                     new_msgs.append(msg)
+                    if msg_id: last_seen_id = msg_id
             
             for msg in new_msgs:
-                direction = "👤 Lead" if msg["direction"] == "inbound" else "🤖 Albert"
+                lead_info = msg.get("leads", {})
+                lead_name = f"{lead_info.get('first_name', '')} {lead_info.get('last_name', '')}".strip() or lead_info.get("phone", "Unknown")
+                
+                direction = f"👤 {lead_name}" if msg["direction"] == "inbound" else "🤖 Albert"
                 time_str = msg.get("created_at", "").split(".")[0].replace("T", " ")
                 print(f"[{time_str}] {direction}: {msg['content']}")
-                last_seen_id = msg["id"]
                 
         except Exception as e:
-            print(f"❌ Error: {e}")
+            # Silent fail for polling errors to keep UI clean
+            pass
 
     # Initial fetch
-    print(f"📜 Latest History (Last {limit}):")
-    print_messages(limit, reset=True)
+    if reset := True:
+        mode_str = "Global" if monitor_all else f"{len(lead_list)} lead(s)"
+        print(f"📜 Latest {mode_str} History (Last {limit}):")
+        print_messages(limit, reset=True)
 
     if watch:
-        print("\n👀 WATCH MODE ACTIVE (Press Ctrl+C to stop)")
-        print("Waiting for new messages...")
+        print(f"\n👀 WATCH MODE ACTIVE ({'Global' if monitor_all else 'Specific Leads'})")
+        print("Waiting for new messages... (Ctrl+C to stop)")
         try:
             while True:
-                time.sleep(2) # Poll every 2 seconds
-                print_messages(5)
+                time.sleep(2)
+                print_messages(10)
         except KeyboardInterrupt:
             print("\n🛑 Stopped monitoring.")
 
 if __name__ == "__main__":
-    import argparse
-    parser = argparse.ArgumentParser(description="Monitor Albert Live Chats")
-    parser.add_get_lead_status = parser.add_argument("phone", help="Phone number in format 'whatsapp:+123456789'")
-    parser.add_argument("--limit", type=int, default=20, help="Number of messages to show initially")
-    parser.add_argument("--watch", action="store_true", help="Keep running and watch for new messages")
-    
-    # Simple direct sys.argv fallback if parser is too complex for user
-    phone = sys.argv[1] if len(sys.argv) > 1 else "whatsapp:+918160178327"
+    phones = []
     watch_mode = "--watch" in sys.argv
+    all_mode = "--all" in sys.argv
     limit_val = 20
-    
-    # Extract limit if exists
-    for i, arg in enumerate(sys.argv):
-        if arg == "--limit" and i+1 < len(sys.argv):
-            limit_val = int(sys.argv[i+1])
 
-    fetch_live_logs(phone, limit=limit_val, watch=watch_mode)
+    # Parse args manually for simplicity
+    for i, arg in enumerate(sys.argv):
+        if i == 0: continue
+        if arg.startswith("--"):
+            if arg == "--limit" and i+1 < len(sys.argv):
+                limit_val = int(sys.argv[i+1])
+            continue
+        # Assume anything else is a phone number
+        phones.append(arg)
+
+    if not phones and not all_mode:
+        print("Usage: python scripts/monitor_live.py [phone1] [phone2] ... [--watch] [--limit N] [--all]")
+        sys.exit(1)
+
+    fetch_live_logs(phones=phones, limit=limit_val, watch=watch_mode, monitor_all=all_mode)
