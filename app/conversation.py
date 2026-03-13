@@ -171,7 +171,18 @@ async def process_conversation(phone: str, message: str, conversation_id: str = 
 
 
 async def check_low_content(phone: str, message: str, session: dict) -> bool:
-    """Checks for low-content spam and handles tiers of exit/waiting."""
+    """
+    Checks for low-content spam.
+    IMPORTANT: In OPENING state, we NEVER put a lead into WAITING —
+    "Hey" is a valid way to start a conversation.
+    Spam protection only kicks in after DISCOVERY.
+    """
+    current_state = session.get("state", ConversationState.OPENING)
+    
+    # RULE: Never spam-filter new clients. Let Albert greet them naturally.
+    if current_state == ConversationState.OPENING:
+        return False
+    
     content = message.strip().lower().rstrip("!?.")
     words = content.split()
     low_content_patterns = ["hey", "heyy", "heyyy", "hi", "hello", "yo", "sup", "?", "ok", "k", "yeah", "nice"]
@@ -182,14 +193,14 @@ async def check_low_content(phone: str, message: str, session: dict) -> bool:
         count = session.get("low_content_count", 0) + 1
         session["low_content_count"] = count
         
-        # Tier 1 (2 messages): Casual re-engage
-        if count == 2:
+        # Tier 1 (3rd message): Casual re-engage
+        if count == 3:
             from app.messaging import send_message
             await send_message(phone, "Haha what's up, you good?")
             return True
         
-        # Tier 2 (3+ messages): State transition to WAITING
-        if count >= settings.LOW_CONTENT_THRESHOLD:
+        # Tier 2 (6+ messages): State transition to WAITING
+        if count >= 6:
             session["state"] = ConversationState.WAITING
             await redis_client.save_session(phone, session)
             from app.messaging import send_message
