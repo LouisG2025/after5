@@ -216,29 +216,14 @@ async def check_low_content(phone: str, message: str, session: dict) -> bool:
 
 async def check_and_send_calendly(phone: str, text: str, history: list) -> str:
     """
-    Ensures Calendly link is sent if:
-    1. It's never been sent before.
-    2. It was last sent more than 10 messages ago.
+    Ensures Calendly link is tracked if sent.
+    We removed the strict backend replacement so the AI doesn't sound robotic with '[link provided above]'.
     """
     calendly_link = settings.CALENDLY_LINK
-    if calendly_link not in text:
-        return text
-
-    # Check history for the last occurrence of the link
-    last_sent_index = -1
-    for i, msg in enumerate(reversed(history)):
-        if msg["role"] == "assistant" and calendly_link in msg["content"]:
-            last_sent_index = i
-            break
     
-    # If found within the last 10 messages, replace it
-    if last_sent_index != -1 and last_sent_index < 11:
-        text = text.replace(calendly_link, "[link provided above]")
-        logger.info("[Conversation] Calendly link sent recently (%d msgs ago) to %s, suppressing", last_sent_index, phone)
-    else:
-        # Mark as sent (though we use history for exact distance, this flag still useful)
+    if calendly_link in text:
         await redis_client.mark_calendly_sent(phone)
-        logger.info("[Conversation] Sending/Resending Calendly link to %s (distance > 10 or new)", phone)
+        logger.info("[Conversation] Tracking Calendly link sent to %s", phone)
 
     return text
 
