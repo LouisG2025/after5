@@ -67,6 +67,15 @@ class AlbertTracker:
             print(f"[Albert Tracker Error] get_lead_by_phone: {e}")
             return None
 
+    def get_all_leads(self) -> list:
+        """Fetch all leads to display in the admin panel."""
+        try:
+            result = supabase.table("leads").select("id, phone, first_name, last_name, temperature").order("created_at", desc=True).execute()
+            return result.data if result.data else []
+        except Exception as e:
+            print(f"[Albert Tracker Error] get_all_leads: {e}")
+            return []
+
     def update_signal_score(self, lead_id: str, score: int) -> None:
         """Call whenever Albert recalculates lead quality. Score: 0–10."""
         if not lead_id or lead_id == "unknown":

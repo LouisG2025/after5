@@ -10,6 +10,25 @@
 			"name": "Admin Control",
 			"item": [
 				{
+					"name": "List All Leads",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/admin/leads",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"admin",
+								"leads"
+							]
+						},
+						"description": "Returns a simple list of all active leads, their names, and phone numbers. Use this to find the exact phone number needed for the Reset Session endpoint."
+					},
+					"response": []
+				},
+				{
 					"name": "Get Lead Status (Tracker)",
 					"request": {
 						"method": "GET",

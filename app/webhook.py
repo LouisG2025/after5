@@ -261,6 +261,22 @@ async def admin_reset_session(request: Request):
         logger.error("[Admin] Reset failed: %s", e)
         return {"status": "error", "reason": str(e)}
 
+@router.get("/admin/leads")
+async def admin_get_all_leads():
+    """
+    Returns a simple list of all active leads, their names, and phone numbers.
+    Useful for knowing what numbers to use for /admin/reset-session.
+    Usage: GET /admin/leads
+    """
+    try:
+        from app.tracker import AlbertTracker
+        tracker = AlbertTracker()
+        leads = tracker.get_all_leads()
+        return {"status": "ok", "count": len(leads), "leads": leads}
+    except Exception as e:
+        logger.error("[Admin] Failed to fetch leads: %s", e)
+        return {"status": "error", "message": str(e)}
+
 
 @router.get("/admin/lead-status/{phone}")
 async def admin_get_lead_status(phone: str):
