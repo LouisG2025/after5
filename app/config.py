@@ -46,7 +46,7 @@ class Settings(BaseSettings):
     
     # Low content spam threshold (Issue 8)
     LOW_CONTENT_THRESHOLD: int = 3          # Messages before WAITING state
-    TYPING_DELAY_PER_CHAR: float = 0.03
+    TYPING_DELAY_PER_CHAR: float = 0.06
     CHUNK_DELAY_SECONDS: float = 1.5
     MAX_FOLLOWUPS: int = 2
     MAX_CHUNKS: int = 3

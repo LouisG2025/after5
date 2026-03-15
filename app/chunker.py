@@ -69,11 +69,16 @@ def _split_at_sentences(sentences: list[str]) -> list[str]:
     ]
 
 def calculate_typing_delay(text: str) -> float:
-    """Realistic typing delay. 2.0s to 5.0s based on length."""
-    # Slower typing speed and higher baseline for realism
-    base = len(text) * getattr(settings, 'TYPING_DELAY_PER_CHAR', 0.04)
-    jitter = random.uniform(-0.2, 0.6)
-    return max(2.0, min(5.0, base + jitter))
+    """Realistic typing delay. 1.5s to 10.0s based on length."""
+    # CPM ~166 (0.06s per char) is very realistic for a human on WhatsApp
+    per_char_delay = getattr(settings, 'TYPING_DELAY_PER_CHAR', 0.06)
+    base = len(text) * per_char_delay
+    
+    # Add a base "reading/thinking" buffer (1.0 to 2.5 seconds)
+    thinking_buffer = random.uniform(1.0, 2.5)
+    
+    # We cap at 10.0s to avoid annoying the user, but allow it to feel 'long' for big bubbles
+    return max(1.5, min(10.0, base + thinking_buffer))
 
 def calculate_reading_delay(text: str) -> float:
     """
