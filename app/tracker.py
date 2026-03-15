@@ -8,12 +8,7 @@ from datetime import datetime, timezone
 from typing import Optional
 from app.supabase_client import supabase_client
 
-# Shortcut to the underlying supabase-py client
-supabase = supabase_client.client
-
-
 class AlbertTracker:
-
     # ─── LEADS ───────────────────────────────────────────────
 
     async def create_lead(
@@ -34,7 +29,8 @@ class AlbertTracker:
             if existing:
                 return existing
 
-            result = await supabase.table("leads").insert({
+            client = await supabase_client.get_client()
+            result = await client.table("leads").insert({
                 "phone": phone,
                 "first_name": first_name,
                 "last_name": last_name,
@@ -61,7 +57,8 @@ class AlbertTracker:
     async def get_lead_by_phone(self, phone: str) -> Optional[dict]:
         """Call on every incoming WhatsApp message to find the lead."""
         try:
-            result = await supabase.table("leads").select("*").eq("phone", phone).execute()
+            client = await supabase_client.get_client()
+            result = await client.table("leads").select("*").eq("phone", phone).execute()
             return result.data[0] if result.data else None
         except Exception as e:
             print(f"[Albert Tracker Error] get_lead_by_phone: {e}")
@@ -70,7 +67,8 @@ class AlbertTracker:
     async def get_all_leads(self) -> list:
         """Fetch all leads to display in the admin panel."""
         try:
-            result = await supabase.table("leads").select("id, phone, first_name, last_name, temperature").order("created_at", desc=True).execute()
+            client = await supabase_client.get_client()
+            result = await client.table("leads").select("id, phone, first_name, last_name, temperature").order("created_at", desc=True).execute()
             return result.data if result.data else []
         except Exception as e:
             print(f"[Albert Tracker Error] get_all_leads: {e}")
@@ -81,7 +79,8 @@ class AlbertTracker:
         if not lead_id or lead_id == "unknown":
             return
         try:
-            await supabase.table("leads").update({
+            client = await supabase_client.get_client()
+            await client.table("leads").update({
                 "signal_score": max(0, min(10, score)),
                 "updated_at": datetime.now(timezone.utc).isoformat(),
             }).eq("id", lead_id).execute()
@@ -93,7 +92,8 @@ class AlbertTracker:
         if not lead_id or lead_id == "unknown":
             return
         try:
-            await supabase.table("leads").update({
+            client = await supabase_client.get_client()
+            await client.table("leads").update({
                 "temperature": temperature,
                 "updated_at": datetime.now(timezone.utc).isoformat(),
             }).eq("id", lead_id).execute()
@@ -105,7 +105,8 @@ class AlbertTracker:
         if not lead_id or lead_id == "unknown":
             return
         try:
-            await supabase.table("leads").update({
+            client = await supabase_client.get_client()
+            await client.table("leads").update({
                 "outcome": outcome,
                 "updated_at": datetime.now(timezone.utc).isoformat(),
             }).eq("id", lead_id).execute()
@@ -119,7 +120,8 @@ class AlbertTracker:
         if not lead_id or lead_id == "unknown":
             return {}
         try:
-            result = await supabase.table("messages").insert({
+            client = await supabase_client.get_client()
+            result = await client.table("messages").insert({
                 "lead_id": lead_id,
                 "direction": "inbound",
                 "content": content,
@@ -136,10 +138,12 @@ class AlbertTracker:
         if not lead_id or lead_id == "unknown":
             return {}
         try:
-            result = await supabase.table("messages").insert({
+            client = await supabase_client.get_client()
+            result = await client.table("messages").insert({
                 "lead_id": lead_id,
                 "direction": "outbound",
                 "content": content,
+                "state": "Unknown" # Ideally track state here too
             }).execute()
             await self._increment_message_count(lead_id)
             await self._update_last_active(lead_id)
@@ -179,7 +183,8 @@ class AlbertTracker:
             if bant_timeline is not None:
                 payload["bant_timeline"] = bant_timeline
 
-            await supabase.table("conversation_state").upsert(payload, on_conflict="lead_id").execute()
+            client = await supabase_client.get_client()
+            await client.table("conversation_state").upsert(payload, on_conflict="lead_id").execute()
         except Exception as e:
             print(f"[Albert Tracker Error] update_state: {e}")
 
@@ -188,7 +193,8 @@ class AlbertTracker:
         if not lead_id or lead_id == "unknown":
             return
         try:
-            await supabase.table("conversation_state").update({
+            client = await supabase_client.get_client()
+            await client.table("conversation_state").update({
                 "is_typing": is_typing,
                 "updated_at": datetime.now(timezone.utc).isoformat(),
             }).eq("lead_id", lead_id).execute()
@@ -207,7 +213,8 @@ class AlbertTracker:
         if not lead_id or lead_id == "unknown":
             return {}
         try:
-            result = await supabase.table("bookings").insert({
+            client = await supabase_client.get_client()
+            result = await client.table("bookings").insert({
                 "lead_id": lead_id,
                 "calendly_event_id": calendly_event_id,
                 "scheduled_at": scheduled_at,
@@ -227,7 +234,8 @@ class AlbertTracker:
         if not lead_id or lead_id == "unknown":
             return
         try:
-            await supabase.table("bookings").update({
+            client = await supabase_client.get_client()
+            await client.table("bookings").update({
                 "status": "cancelled"
             }).eq("calendly_event_id", calendly_event_id).execute()
             await self.update_outcome(lead_id, "In Progress")
@@ -252,7 +260,8 @@ class AlbertTracker:
         if not lead_id or lead_id == "unknown":
             return
         try:
-            await supabase.table("llm_sessions").insert({
+            client = await supabase_client.get_client()
+            await client.table("llm_sessions").insert({
                 "lead_id": lead_id,
                 "helicone_id": response_id,
                 "model": model,
@@ -272,7 +281,8 @@ class AlbertTracker:
         if not lead_id or lead_id == "unknown":
             return
         try:
-            await supabase.table("conversation_state").upsert({
+            client = await supabase_client.get_client()
+            await client.table("conversation_state").upsert({
                 "lead_id": lead_id,
                 "current_state": "Opening",
                 "message_count": 0,
@@ -285,10 +295,11 @@ class AlbertTracker:
         if not lead_id or lead_id == "unknown":
             return
         try:
-            result = await supabase.table("conversation_state").select("message_count").eq("lead_id", lead_id).execute()
+            client = await supabase_client.get_client()
+            result = await client.table("conversation_state").select("message_count").eq("lead_id", lead_id).execute()
             if result.data:
                 count = (result.data[0].get("message_count") or 0) + 1
-                await supabase.table("conversation_state").update({
+                await client.table("conversation_state").update({
                     "message_count": count
                 }).eq("lead_id", lead_id).execute()
         except Exception as e:
@@ -298,7 +309,8 @@ class AlbertTracker:
         if not lead_id or lead_id == "unknown":
             return
         try:
-            await supabase.table("conversation_state").update({
+            client = await supabase_client.get_client()
+            await client.table("conversation_state").update({
                 "last_active_at": datetime.now(timezone.utc).isoformat()
             }).eq("lead_id", lead_id).execute()
         except Exception as e:

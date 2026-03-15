@@ -124,18 +124,6 @@ async def webhook(request: Request, background_tasks: BackgroundTasks):
                 except Exception as e:
                     logger.error("Error checking CLOSED cooldown: %s", e)
         
-        # Tracker Logging
-        try:
-            from app.tracker import AlbertTracker
-            tracker = AlbertTracker()
-            lead = await tracker.get_lead_by_phone(sender_phone)
-            if not lead:
-                lead = await tracker.create_lead(phone=sender_phone, first_name=sender_name)
-            if lead:
-                await tracker.log_inbound(lead["id"], message_text)
-        except Exception as e:
-            logger.error("[Webhook] Tracker failed: %s", e)
-
         # 4. Check for low-content spam (WAITING transition)
         from app.conversation import check_low_content
         is_spam_threshold_reached = await check_low_content(sender_phone, message_text, session)
@@ -145,17 +133,23 @@ async def webhook(request: Request, background_tasks: BackgroundTasks):
         # ═══ BUFFER — DON'T PROCESS YET ═══
         batch_id = await redis_client.buffer_message(sender_phone, message_text)
         
-        # Mark as read (blue ticks) — do this immediately
+        # ═══ BACKGROUND TASKS ═══
+        # 1. Tracker Logging (now in background to avoid blocking webhook response)
+        background_tasks.add_task(
+            _background_tracker_log, sender_phone, sender_name, message_text
+        )
+
+        # 2. Mark as read (blue ticks)
         background_tasks.add_task(
             _delayed_read_receipt, message_id
         )
         
-        # Start buffer timer
+        # 3. Start buffer timer
         background_tasks.add_task(
             _delayed_buffer_process, sender_phone, batch_id, message_id
         )
         
-        # Safety: hard max timer
+        # 4. Safety: hard max timer
         background_tasks.add_task(
             _hard_max_check, sender_phone, message_id
         )
@@ -165,6 +159,19 @@ async def webhook(request: Request, background_tasks: BackgroundTasks):
     except Exception as e:
         logger.error(f"Webhook error: {e}")
         return {"status": "error"}
+
+async def _background_tracker_log(phone: str, name: str, message: str):
+    """Logs incoming message to Supabase in the background."""
+    try:
+        from app.tracker import AlbertTracker
+        tracker = AlbertTracker()
+        lead = await tracker.get_lead_by_phone(phone)
+        if not lead:
+            lead = await tracker.create_lead(phone=phone, first_name=name)
+        if lead:
+            await tracker.log_inbound(lead["id"], message)
+    except Exception as e:
+        logger.error("[Webhook] Background Tracker failed: %s", e)
 
 # ═══ DELAYED READ RECEIPT ═══
 
