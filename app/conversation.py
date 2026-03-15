@@ -4,11 +4,12 @@ from app.config import settings
 from app.llm import llm_client
 from app.redis_client import redis_client
 from app.supabase_client import supabase_client
-from app.messaging import send_message, send_chunked_messages, send_typing_indicator
+from app.models import ConversationState
+from app.messaging import send_message, send_chunked_messages, send_typing_indicator, mark_as_read
 from app.chunker import chunk_message, calculate_typing_delay
 from app.state_machine import check_transition
 from app.bant import extract_bant
-from app.models import ConversationState
+from app.knowledge import retrieve_knowledge
 from typing import Dict, Any
 
 from app.tracker import AlbertTracker
@@ -29,7 +30,6 @@ async def process_conversation(phone: str, message: str, conversation_id: str = 
         # Step 2: Handle /reset command
         if message.strip().lower() == "/reset":
             logger.info("[Conversation] Reset command detected for %s. Clearing session.", phone)
-            from app.models import ConversationState
             session = {
                 "state": ConversationState.OPENING,
                 "history": [],
@@ -38,14 +38,12 @@ async def process_conversation(phone: str, message: str, conversation_id: str = 
                 "low_content_count": 0
             }
             await redis_client.save_session(phone, session)
-            from app.messaging import send_message
             await send_message(phone, "haha no worries, fresh start it is. How can I help today?")
             await redis_client.set_processing(phone, False)
             return
 
         # Step 3: Send read receipt (blue ticks) 
         if message_id:
-            from app.messaging import mark_as_read
             print(f"[Conversation] ✅ Sending blue ticks for {phone}", flush=True)
             await mark_as_read(conversation_id, message_id)
 
@@ -88,7 +86,6 @@ async def process_conversation(phone: str, message: str, conversation_id: str = 
             return
 
         # Step 8: Knowledge Base Retrieval (RAG)
-        from app.knowledge import retrieve_knowledge
         print(f"[Conversation] 🔍 Searching knowledge base for: {phone}", flush=True)
         knowledge_context = await retrieve_knowledge(message)
         if knowledge_context:
@@ -134,11 +131,9 @@ async def process_conversation(phone: str, message: str, conversation_id: str = 
         # Step 11: Send natural multi-bubble response
         if response_text:
             print(f"[Conversation] 📤 Splitting and sending multi-bubble response to {phone}", flush=True)
-            from app.chunker import chunk_message
             chunks = chunk_message(response_text)
             
             # Use the existing utility that handles delays and typing indicators
-            from app.messaging import send_chunked_messages
             await send_chunked_messages(phone, chunks, conversation_id, message_id)
             
             if lead_id:
@@ -220,7 +215,6 @@ async def check_low_content(phone: str, message: str, session: dict) -> bool:
         
         # Tier 1 (3rd message): Casual re-engage
         if count == 3:
-            from app.messaging import send_message
             await send_message(phone, "Haha what's up, you good?")
             return True
         
@@ -228,7 +222,6 @@ async def check_low_content(phone: str, message: str, session: dict) -> bool:
         if count >= 6:
             session["state"] = ConversationState.WAITING
             await redis_client.save_session(phone, session)
-            from app.messaging import send_message
             await send_message(phone, "Hey, timing might be off. I'm here whenever you want to have a proper chat.")
             return True
             

@@ -1,48 +1,67 @@
 import asyncio
+import logging
 from fastapi import APIRouter, Body, BackgroundTasks
 from app.models import LeadCreate
 from app.supabase_client import supabase_client
-from app.messaging import send_message
+from app.messaging import send_message, send_typing_indicator, send_chunked_messages
 from app.redis_client import redis_client
 from app.models import ConversationState
+from app.tracker import AlbertTracker
+from app.chunker import chunk_message, calculate_typing_delay
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 async def send_initial_outreach(name: str, phone: str, company: str, form_data: dict = None):
     """Sends the first outbound message after a delay."""
-    from app.tracker import AlbertTracker
     tracker = AlbertTracker()
 
-    # 1. Save to Supabase via Tracker
+    # 1. Save to Supabase via Tracker with source
     lead = await tracker.get_lead_by_phone(phone)
     if not lead:
-        lead = await tracker.create_lead(phone=phone, first_name=name, company=company)
+        lead = await tracker.create_lead(
+            phone=phone, 
+            first_name=name, 
+            company=company, 
+            lead_source=form_data.get("source", "Website Demo Form") if form_data else "Website Demo Form",
+            form_message=form_data.get("message", "") if form_data else ""
+        )
     
     lead_id = lead.get("id")
 
-    # 2. Start outreach sequence
-    await asyncio.sleep(30)
+    # 2. Start outreach sequence (Radio silence first)
+    await asyncio.sleep(20)
     
-    # 3. Initialize session with full form data if available
-    # Form leads bypass OPENING and go straight to DISCOVERY
+    # 3. Message Prep (London Guy tone: lowercase, tbh, |||)
+    first_message = f"hey {name}, Albert here|||just saw you checked out the demo for {company} and wanted to say hi|||any questions on how it all works tbh"
+    
+    # 4. Human-like outreach: Typing indicator and character-based delay
+    chunks = chunk_message(first_message)
+    outreach_delay = calculate_typing_delay(chunks[0])
+    
+    logger.info("[Outreach] Showing typing indicator for %.1fs for %s", outreach_delay, phone)
+    await send_typing_indicator(phone)
+    await asyncio.sleep(outreach_delay)
+
+    # 5. Send the message(s)
+    await send_chunked_messages(phone, chunks)
+    
+    # 6. Initialize session with history and correct state
+    target_state = ConversationState.DISCOVERY if form_data else ConversationState.OPENING
     session = {
-        "state": ConversationState.DISCOVERY if form_data else ConversationState.OPENING,
-        "history": [],
-        "turn_count": 0,
+        "state": target_state,
+        "history": [{"role": "assistant", "content": first_message}],
+        "turn_count": 1,
         "lead_data": {**(lead or {}), **(form_data or {})}
     }
     await redis_client.save_session(phone, session)
     
-    # 4. Send first message
-    first_message = f"Hey {name}, this is Albert from After5 Digital. I saw your inquiry about {company} — wanted to reach out and see how we can help!"
-    await send_message(phone, first_message)
-    
-    # 5. Log and update via Tracker
+    # 7. Log and update via Tracker
     await tracker.log_outbound(lead_id, first_message)
-    await tracker.update_state(lead_id, "Opening")
     
-    # Initial history
-    await redis_client.add_to_history(phone, "assistant", first_message)
+    # State synchronization with Supabase
+    state_label = "Discovery" if target_state == ConversationState.DISCOVERY else "Opening"
+    await tracker.update_state(lead_id, state_label)
 
 @router.post("/send-outbound")
 async def send_outbound(lead: LeadCreate, background_tasks: BackgroundTasks = None):

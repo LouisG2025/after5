@@ -154,8 +154,7 @@ class AlbertTracker:
             result = await client.table("messages").insert({
                 "lead_id": lead_id,
                 "direction": "outbound",
-                "content": content,
-                "state": "Unknown" # Ideally track state here too
+                "content": content
             }).execute()
             await self._increment_message_count(lead_id)
             await self._update_last_active(lead_id)
