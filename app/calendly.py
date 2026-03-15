@@ -3,7 +3,7 @@ from fastapi import APIRouter, Request
 
 from app.redis_client import redis_client
 from app.supabase_client import supabase_client
-from app.messagebird_client import send_chunked_messages
+from app.messaging import send_chunked_messages
 
 logger = logging.getLogger(__name__)
 
@@ -100,6 +100,9 @@ async def calendly_webhook(request: Request):
                 calendly_event_id=event_uri,
                 scheduled_at=scheduled_at
             )
+            # Clear Redis session to force state refresh on next user message
+            await redis_client.redis.delete(f"session:{phone}")
+            logger.info("[Calendly] 🧹 Cleared Redis session for %s after booking confirmation", phone)
         
         # ── 3. Send WhatsApp confirmation ──
         try:
