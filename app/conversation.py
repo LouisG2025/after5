@@ -26,17 +26,32 @@ async def process_conversation(phone: str, message: str, conversation_id: str = 
         print(f"\n[Conversation] 🚀 Starting process for {phone}: '{message[:50]}...'", flush=True)
         logger.info("\n[Conversation] 🚀 Starting process for %s: '%s...'", phone, message[:50])
 
-        # Step 1: Initial wait (3s rolling + 2s here = 5s total)
-        await asyncio.sleep(2)
-        
-        # Step 2: Send read receipt (blue ticks) at 5s mark
+        # Step 2: Handle /reset command
+        if message.strip().lower() == "/reset":
+            logger.info("[Conversation] Reset command detected for %s. Clearing session.", phone)
+            from app.models import ConversationState
+            session = {
+                "state": ConversationState.OPENING,
+                "history": [],
+                "turn_count": 0,
+                "lead_data": {"phone": phone},
+                "low_content_count": 0
+            }
+            await redis_client.save_session(phone, session)
+            from app.messaging import send_message
+            await send_message(phone, "haha no worries, fresh start it is. How can I help today?")
+            await redis_client.set_processing(phone, False)
+            return
+
+        # Step 3: Send read receipt (blue ticks) 
         if message_id:
             from app.messaging import mark_as_read
             print(f"[Conversation] ✅ Sending blue ticks for {phone}", flush=True)
             await mark_as_read(conversation_id, message_id)
 
-        # Step 3: Random pause before typing (3-5s)
-        extra_pause = random.uniform(3, 5)
+        # Step 4: Random pause before typing (1-2s)
+        # 5s buffer (rolling) + 1-2s here = 6-7s total before typing start
+        extra_pause = random.uniform(1, 2)
         print(f"[Conversation] ⏳ Waiting {extra_pause:.1f}s before typing start", flush=True)
         await asyncio.sleep(extra_pause)
 
@@ -132,7 +147,7 @@ async def process_conversation(phone: str, message: str, conversation_id: str = 
         # Step 12: Update session history and turn count
         session["history"].append({"role": "user", "content": message})
         session["history"].append({"role": "assistant", "content": response_text})
-        session["history"] = session["history"][-100:]
+        session["history"] = session["history"][-50:]
         session["turn_count"] += 1
         session["last_updated"] = datetime.now(timezone.utc).isoformat()
 
