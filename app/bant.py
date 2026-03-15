@@ -60,7 +60,7 @@ async def extract_bant(phone: str, history: List[Dict[str, str]]):
         await redis_client.save_session(phone, session)
         
         # ── Update Tracker ─────────────────
-        tracker.update_state(
+        await tracker.update_state(
             lead_id=lead_id,
             current_state=session["state"],
             bant_budget=bant_data.get("budget", {}).get("evidence"),
@@ -69,14 +69,14 @@ async def extract_bant(phone: str, history: List[Dict[str, str]]):
             bant_timeline=bant_data.get("timeline", {}).get("evidence")
         )
         
-        tracker.update_signal_score(lead_id, bant_data.get("overall_score", 0))
+        await tracker.update_signal_score(lead_id, bant_data.get("overall_score", 0))
         
         # Logic for temperature
         score = bant_data.get("overall_score", 0)
         temp = "Cold"
         if score >= 8: temp = "Hot"
         elif score >= 5: temp = "Warm"
-        tracker.update_temperature(lead_id, temp)
+        await tracker.update_temperature(lead_id, temp)
             
     except Exception as e:
         print(f"Error extracting BANT for {phone}: {e}")

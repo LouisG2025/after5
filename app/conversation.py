@@ -43,9 +43,9 @@ async def process_conversation(phone: str, message: str, conversation_id: str = 
         # Step 4: Get session and lead data
         session = await redis_client.get_session(phone)
         if not session:
-            lead = tracker.get_lead_by_phone(phone)
+            lead = await tracker.get_lead_by_phone(phone)
             if not lead:
-                lead = tracker.create_lead(phone=phone)
+                lead = await tracker.create_lead(phone=phone)
             session = {
                 "state": ConversationState.OPENING,
                 "history": [],
@@ -62,7 +62,7 @@ async def process_conversation(phone: str, message: str, conversation_id: str = 
         print(f"[Conversation] ✍️ Starting typing simulation for {phone}", flush=True)
         await send_typing_indicator(phone, conversation_id, message_id)
         if lead_id:
-            tracker.set_typing_status(lead_id, True)
+            await tracker.set_typing_status(lead_id, True)
 
         # Step 6: Set processing flag
         await redis_client.set_processing(phone, True)
@@ -127,17 +127,17 @@ async def process_conversation(phone: str, message: str, conversation_id: str = 
             await send_chunked_messages(phone, chunks, conversation_id, message_id)
             
             if lead_id:
-                tracker.set_typing_status(lead_id, False)
+                await tracker.set_typing_status(lead_id, False)
 
         # Step 12: Update session history and turn count
         session["history"].append({"role": "user", "content": message})
         session["history"].append({"role": "assistant", "content": response_text})
-        session["history"] = session["history"][-10:]
+        session["history"] = session["history"][-100:]
         session["turn_count"] += 1
         session["last_updated"] = datetime.now(timezone.utc).isoformat()
 
         # Step 13: Tracking outbound
-        tracker.log_outbound(lead_id, response_text)
+        await tracker.log_outbound(lead_id, response_text)
 
         # Step 14: Check for state transition
         new_state = check_transition(session["state"], session)
@@ -168,7 +168,7 @@ async def process_conversation(phone: str, message: str, conversation_id: str = 
                 ConversationState.WAITING: "Waiting",
                 ConversationState.CLOSED: "Closed"
             }
-            tracker.update_state(lead_id, state_map.get(new_state, "Opening"))
+            await tracker.update_state(lead_id, state_map.get(new_state, "Opening"))
 
         # Step 15: Cleanup and background tasks
         await redis_client.save_session(phone, session)

@@ -128,11 +128,11 @@ async def webhook(request: Request, background_tasks: BackgroundTasks):
         try:
             from app.tracker import AlbertTracker
             tracker = AlbertTracker()
-            lead = tracker.get_lead_by_phone(sender_phone)
+            lead = await tracker.get_lead_by_phone(sender_phone)
             if not lead:
-                lead = tracker.create_lead(phone=sender_phone, first_name=sender_name)
+                lead = await tracker.create_lead(phone=sender_phone, first_name=sender_name)
             if lead:
-                tracker.log_inbound(lead["id"], message_text)
+                await tracker.log_inbound(lead["id"], message_text)
         except Exception as e:
             logger.error("[Webhook] Tracker failed: %s", e)
 
@@ -282,7 +282,7 @@ async def admin_get_all_leads():
     try:
         from app.tracker import AlbertTracker
         tracker = AlbertTracker()
-        leads = tracker.get_all_leads()
+        leads = await tracker.get_all_leads()
         return {"status": "ok", "count": len(leads), "leads": leads}
     except Exception as e:
         return {"status": "error", "message": str(e)}
@@ -294,11 +294,11 @@ async def admin_get_lead_status(phone: str):
         from app.tracker import AlbertTracker
         from app.supabase_client import supabase_client
         tracker = AlbertTracker()
-        lead = tracker.get_lead_by_phone(phone)
+        lead = await tracker.get_lead_by_phone(phone)
         if not lead:
             return {"status": "error", "message": "Lead not found in Supabase database"}
             
-        res = supabase_client.client.table("conversation_state").select("*").eq("lead_id", lead["id"]).execute()
+        res = await supabase_client.client.table("conversation_state").select("*").eq("lead_id", lead["id"]).execute()
         conv_state = res.data[0] if res.data else {}
         
         return {

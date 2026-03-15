@@ -14,9 +14,9 @@ async def send_initial_outreach(name: str, phone: str, company: str, form_data: 
     tracker = AlbertTracker()
 
     # 1. Save to Supabase via Tracker
-    lead = tracker.get_lead_by_phone(phone)
+    lead = await tracker.get_lead_by_phone(phone)
     if not lead:
-        lead = tracker.create_lead(phone=phone, first_name=name, company=company)
+        lead = await tracker.create_lead(phone=phone, first_name=name, company=company)
     
     lead_id = lead.get("id")
 
@@ -38,8 +38,8 @@ async def send_initial_outreach(name: str, phone: str, company: str, form_data: 
     await send_message(phone, first_message)
     
     # 5. Log and update via Tracker
-    tracker.log_outbound(lead_id, first_message)
-    tracker.update_state(lead_id, "Opening")
+    await tracker.log_outbound(lead_id, first_message)
+    await tracker.update_state(lead_id, "Opening")
     
     # Initial history
     await redis_client.add_to_history(phone, "assistant", first_message)

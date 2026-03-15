@@ -90,7 +90,7 @@ class LLMClient:
             cost = self._estimate_cost(model, usage.prompt_tokens, usage.completion_tokens)
 
             # Log to Supabase Tracker
-            tracker.log_llm_call(
+            await tracker.log_llm_call(
                 lead_id=lead_id,
                 response_id=response.id,
                 model=model,

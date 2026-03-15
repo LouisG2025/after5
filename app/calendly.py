@@ -89,13 +89,13 @@ async def calendly_webhook(request: Request):
         return {"status": "error", "reason": "phone_not_found"}
     phone = normalize_phone(raw_phone)
     
-    lead = tracker.get_lead_by_phone(phone)
+    lead = await tracker.get_lead_by_phone(phone)
     event_uri = payload.get("event") # Calendly often uses event URI as ID
 
     if event == "invitee.created":
         scheduled_at = payload.get("scheduled_event", {}).get("start_time")
         if lead:
-            tracker.confirm_booking(
+            await tracker.confirm_booking(
                 lead_id=lead["id"],
                 calendly_event_id=event_uri,
                 scheduled_at=scheduled_at
@@ -113,7 +113,7 @@ async def calendly_webhook(request: Request):
 
     elif event == "invitee.canceled":
         if lead:
-            tracker.cancel_booking(
+            await tracker.cancel_booking(
                 lead_id=lead["id"],
                 calendly_event_id=event_uri
             )
