@@ -90,9 +90,18 @@ async def process_conversation(phone: str, message: str, conversation_id: str = 
         )
         print(f"[Conversation] 🤖 LLM Response generated for {phone}", flush=True)
         
-        if not response_text:
+        if not response_text or "[NO_REPLY]" in response_text.upper():
+            if response_text and "[NO_REPLY]" in response_text.upper():
+                logger.info("[Conversation] LLM generated [NO_REPLY] for %s. Ignoring and doing nothing.", phone)
             await redis_client.set_processing(phone, False)
             return
+
+        # Step 9.5: Clean Response (Strip any system tags like [SYSTEM ACTION: ...])
+        import re
+        original_response = response_text
+        response_text = re.sub(r'\[[A-Z\s_]+:?.*?\]', '', response_text).strip()
+        if original_response != response_text:
+            logger.info("[Conversation] Stripped system tags from response for %s", phone)
 
         # Step 9: Interrupt Check — did new messages arrive during LLM call?
         new_messages_str = await redis_client.get_and_clear_buffer(phone)
