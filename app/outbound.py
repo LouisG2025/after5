@@ -38,7 +38,7 @@ async def send_initial_outreach(name: str, phone_raw: str, company: str, form_da
         await asyncio.sleep(20)
         
         # 3. Message Prep (London Guy tone: lowercase, tbh, |||)
-        first_message = f"Hey {name}, Albert here|||just saw you checked out the demo for {company} and wanted to say Hey|||any questions on how it all works tbh"
+        first_message = f"Hey {name}, Albert here|||just saw you checked out the demo for {company} and wanted to say hey|||any questions on how it all works tbh"
         
         # 4. Human-like outreach: Typing indicator and character-based delay
         chunks = chunk_message(first_message)
