@@ -46,7 +46,19 @@ async def webhook(request: Request, background_tasks: BackgroundTasks):
         changes = entry.get("changes", [{}])[0]
         value = changes.get("value", {})
         
-        # IMPORTANT: Ignore status updates (delivered, read receipts)
+        # Status updates (delivered, read receipts, failed)
+        statuses = value.get("statuses")
+        if statuses:
+            status_obj = statuses[0]
+            status_type = status_obj.get("status")
+            recipient = status_obj.get("recipient_id")
+            if status_type == "failed":
+                errors = status_obj.get("errors", [])
+                logger.error(f"[Webhook Status] ❌ Message to {recipient} FAILED: {errors}")
+            else:
+                logger.info(f"[Webhook Status] ✅ Message to {recipient}: {status_type}")
+            return {"status": "ok"}
+        
         # Only process actual messages
         messages = value.get("messages")
         if not messages:
