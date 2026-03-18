@@ -18,9 +18,9 @@ async def export_training_data(format: str = "openai") -> str:
         # We take anything with manual_score >= 80 OR (score >= 80 and not reviewed)
         response = await supabase_client.table("training_data") \
             .select("*") \
-            .order("is_reviewed", descending=True) \
-            .order("manual_score", descending=True) \
-            .order("score", descending=True) \
+            .order("is_reviewed", desc=True) \
+            .order("manual_score", desc=True) \
+            .order("score", desc=True) \
             .execute()
         
         records = response.data

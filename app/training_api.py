@@ -89,7 +89,7 @@ async def get_worthy_conversations(limit: int = 50):
     try:
         response = await supabase_client.table("training_data") \
             .select("*, leads(first_name, last_name, phone)") \
-            .order("created_at", descending=True) \
+            .order("created_at", desc=True) \
             .limit(limit) \
             .execute()
         return {"status": "ok", "data": response.data}
@@ -150,3 +150,60 @@ async def get_training_stats():
         }
     except Exception as e:
         return {"status": "error", "detail": str(e)}
+@router.get("/brain")
+async def get_brain_rules():
+    """Get active few-shot rules from Dynamic Training table."""
+    try:
+        response = await supabase_client.get_client()
+        res = await response.table("training_data") \
+            .select("*") \
+            .order("priority", desc=True) \
+            .execute()
+        return {"status": "ok", "data": res.data}
+    except Exception as e:
+        logger.error(f"Error fetching brain rules: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/brain")
+async def add_brain_rule(data: Dict[str, Any]):
+    """Add a new rule to the Dynamic Training brain."""
+    try:
+        client = await supabase_client.get_client()
+        res = await client.table("training_data") \
+            .insert(data) \
+            .execute()
+        return {"status": "ok", "data": res.data}
+    except Exception as e:
+        logger.error(f"Error adding brain rule: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.delete("/brain/{id}")
+async def delete_brain_rule(id: int):
+    """Remove a rule from the Dynamic Training brain."""
+    try:
+        client = await supabase_client.get_client()
+        await client.table("training_data") \
+            .delete() \
+            .eq("id", id) \
+            .execute()
+        return {"status": "ok"}
+    except Exception as e:
+        logger.error(f"Error deleting brain rule: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/worthy/manual")
+async def add_worthy_manually(data: Dict[str, Any]):
+    """Manually add a conversation to the training pool."""
+    try:
+        client = await supabase_client.get_client()
+        res = await client.table("training_data").insert({
+            "lead_id": data.get("lead_id"),
+            "score": data.get("score", 100),
+            "outcome": data.get("outcome", "manual_pick"),
+            "history": data.get("history"),
+            "feedback": data.get("feedback", "Manual Pick from Dashboard")
+        }).execute()
+        return {"status": "ok", "data": res.data}
+    except Exception as e:
+        logger.error(f"Error manually adding to pool: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

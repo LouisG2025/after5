@@ -130,12 +130,17 @@ class LLMClient:
             with open(prompt_path, "r", encoding="utf-8") as f:
                 system_prompt = f.read()
         else:
-            # DYNAMIC MODE: Start with Core and inject what's needed
-            core_path = os.path.join(os.getcwd(), "prompts", "system_prompt.txt")
-            with open(core_path, "r", encoding="utf-8") as f:
-                core_prompt = f.read()
+            # DYNAMIC MODE: Use PromptAssembler to build modular prompt
+            from app.prompt_assembler import prompt_assembler
+            conversation_state = session.get("state", "opening")
+            if hasattr(conversation_state, "value"):
+                conversation_state = conversation_state.value  # unwrap Enum
+            core_prompt = await prompt_assembler.build_prompt(
+                customer_message=message,
+                conversation_state=str(conversation_state),
+            )
             
-            # 1. Dynamic Industry Injection
+            # 1. Dynamic Industry Injection (supplemental on top of assembled prompt)
             industry_context = ""
             industry = (lead_data.get("industry") or "").lower()
             industry_map = {
@@ -148,7 +153,7 @@ class LLMClient:
                 "clinic": "clinics.txt",
                 "dental": "clinics.txt"
             }
-            
+
             # Check message for industry keywords too
             msg_lower = message.lower()
             for key, filename in industry_map.items():
@@ -226,10 +231,27 @@ class LLMClient:
         except Exception as e:
             print(f"[LLM] ❌ Error getting relevant example: {e}", flush=True)
 
-        # Combine Core + Addons
-        system_prompt = core_prompt.replace("{{DYNAMIC_KNOWLEDGE}}", industry_context)
-        system_prompt = system_prompt.replace("{{DYNAMIC_OBJECTIONS}}", objection_context)
-        system_prompt = system_prompt.replace("{{DYNAMIC_EXAMPLES}}", example_context)
+        # Combine Core + Addons (Industry, Objections, Examples)
+        # Using a more robust combination that appends if placeholders aren't found
+        system_prompt = core_prompt
+        
+        # Industry Injection
+        if "{{DYNAMIC_KNOWLEDGE}}" in system_prompt:
+            system_prompt = system_prompt.replace("{{DYNAMIC_KNOWLEDGE}}", industry_context)
+        elif industry_context:
+            system_prompt += f"\n\n{industry_context}"
+            
+        # Objection Injection
+        if "{{DYNAMIC_OBJECTIONS}}" in system_prompt:
+            system_prompt = system_prompt.replace("{{DYNAMIC_OBJECTIONS}}", objection_context)
+        elif objection_context:
+            system_prompt += f"\n\n{objection_context}"
+            
+        # Example Injection
+        if "{{DYNAMIC_EXAMPLES}}" in system_prompt:
+            system_prompt = system_prompt.replace("{{DYNAMIC_EXAMPLES}}", example_context)
+        elif example_context:
+            system_prompt += f"\n\n{example_context}"
 
         # Inject RAG context if available (Standard RAG)
         if knowledge_context:
