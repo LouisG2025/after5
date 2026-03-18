@@ -49,24 +49,15 @@ async def send_chunked_messages(to: str, chunks: list[str], conversation_id: str
     """Send multiple messages with realistic typing delays and interrupt check."""
     from app.redis_client import redis_client
     for i, chunk in enumerate(chunks):
-        # 1. Start Typing Indicator
-        await send_typing_indicator(to)
-
-        # 2. Thinking/Typing Delay
+        # Thinking/Typing Delay (Human feel)
         if i == 0:
             delay = random.uniform(2.0, 4.0)
         else:
             delay = calculate_typing_delay(chunk)
             
-        # Simulate thinking/waiting period (Human feel)
-        intervals = int(delay / 1.0) # Check every second
+        intervals = int(delay / 1.0)
         for sec in range(intervals):
             await asyncio.sleep(1.0)
-            
-            # Refresh typing indicator if we've waited more than 10s (Meta expires it at 25s)
-            if sec > 0 and sec % 10 == 0:
-                await send_typing_indicator(to)
-            
             if await redis_client.has_new_messages(to):
                 logger.info(f"Interrupt: New message during delay for {to}. Aborting.")
                 return

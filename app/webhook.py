@@ -165,10 +165,8 @@ async def webhook(request: Request, background_tasks: BackgroundTasks):
         await redis_client.redis.set(f"last_msg_id:{sender_phone}", message_id, ex=300)
         await redis_client.redis.set(f"last_name:{sender_phone}", sender_name, ex=300)
 
-        # 5. Instant Blue Tick & Typing (Master UX)
-        # We mark as read and start typing immediately
+        # 5. Instant Blue Tick (Master UX)
         background_tasks.add_task(mark_as_read, "", message_id)
-        background_tasks.add_task(send_typing_indicator, sender_phone)
         
         # Fire delayed processor (3s rolling timer)
         background_tasks.add_task(_delayed_buffer_process, sender_phone, batch_id)
