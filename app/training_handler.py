@@ -91,17 +91,19 @@ class TrainingHandler:
             client = await supabase_client.get_client()
             entry = {
                 "category": category,
-                "subcategory": parsed.get("subcategory"),
-                "trigger_keywords": parsed["trigger_keywords"],
-                "scenario": parsed["scenario"],
-                "ideal_response": parsed["ideal_response"],
+                "trigger": parsed["scenario"],
+                "response": parsed["ideal_response"],
                 "priority": parsed.get("priority", 5),
                 "is_active": True,
-                "added_by": phone,
-                "notes": parsed.get("notes")
+                "metadata": {
+                    "subcategory": parsed.get("subcategory"),
+                    "trigger_keywords": parsed.get("trigger_keywords", []),
+                    "added_by": phone,
+                    "notes": parsed.get("notes")
+                }
             }
 
-            result = await client.table("training_data").insert(entry).execute()
+            result = await client.table("dynamic_training").insert(entry).execute()
             entry_id = result.data[0]["id"][:8]
 
             # Invalidate assembler cache so next customer message picks up new training
@@ -177,6 +179,7 @@ class TrainingHandler:
         
         client = await supabase_client.get_client()
         query = client.table("training_data").select("*").eq("is_active", True)
+        query = (await supabase_client.get_client()).table("dynamic_training")
         if category:
             query = query.eq("category", category)
         
@@ -185,7 +188,7 @@ class TrainingHandler:
         
         lines = [f"📋 Training Entries{f' ({category})' if category else ''}:"]
         for e in result.data:
-            lines.append(f"• [{e['id'][:8]}] {e['category']}: {e['scenario'][:40]}...")
+            lines.append(f"• [{e['id'][:8]}] {e['category']}: {e.get('trigger', '')[:40]}...")
         return "\n".join(lines)
 
     async def _handle_delete(self, message: str) -> str:
@@ -194,7 +197,7 @@ class TrainingHandler:
         entry_id = parts[2]
         try:
             client = await supabase_client.get_client()
-            await client.table("training_data").update({"is_active": False}).like("id", f"{entry_id}%").execute()
+            await client.table("dynamic_training").update({"is_active": False}).like("id", f"{entry_id}%").execute()
             # Invalidate assembler cache
             from app.prompt_assembler import prompt_assembler
             await prompt_assembler.invalidate_cache()
@@ -204,7 +207,7 @@ class TrainingHandler:
     async def _handle_stats(self) -> str:
         try:
             client = await supabase_client.get_client()
-            result = await client.table("training_data").select("category, is_active").execute()
+            result = await client.table("dynamic_training").select("category, is_active").execute()
             stats = {}
             for e in result.data:
                 cat = e["category"]

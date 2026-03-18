@@ -155,7 +155,7 @@ async def get_brain_rules():
     """Get active few-shot rules from Dynamic Training table."""
     try:
         response = await supabase_client.get_client()
-        res = await response.table("training_data") \
+        res = await response.table("dynamic_training") \
             .select("*") \
             .order("priority", desc=True) \
             .execute()
@@ -169,7 +169,7 @@ async def add_brain_rule(data: Dict[str, Any]):
     """Add a new rule to the Dynamic Training brain."""
     try:
         client = await supabase_client.get_client()
-        res = await client.table("training_data") \
+        res = await client.table("dynamic_training") \
             .insert(data) \
             .execute()
         return {"status": "ok", "data": res.data}
@@ -182,7 +182,7 @@ async def delete_brain_rule(id: int):
     """Remove a rule from the Dynamic Training brain."""
     try:
         client = await supabase_client.get_client()
-        await client.table("training_data") \
+        await client.table("dynamic_training") \
             .delete() \
             .eq("id", id) \
             .execute()
