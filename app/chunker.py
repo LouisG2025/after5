@@ -12,20 +12,23 @@ def chunk_message(text: str) -> list[str]:
     if not text:
         return [text]
     
-    # NEW HUMAN-LIKE LOGIC:
-    # 1. Look for a natural first sentence (acknowledgment/greeting)
-    sentences = re.split(r'(?<=[.!?])\s+', text)
-    
-    if len(sentences) > 1:
-        first_sent = sentences[0].strip()
-        # If first sentence is an acknowledgment (short), make it the first bubble
-        if len(first_sent) < 100:
-            chunks = [first_sent, " ".join(sentences[1:]).strip()]
-        else:
-            # Fallback to standard splitting
-            chunks = _split_at_sentences(text)
+    # 1. Priority: Explicit markers
+    if "|||" in text:
+        chunks = [c.strip() for c in text.split("|||") if c.strip()]
+    elif "[CHUNK]" in text:
+        chunks = [c.strip() for c in text.split("[CHUNK]") if c.strip()]
     else:
-        chunks = [text]
+        # 2. Human-like logic: First sentence separation
+        sentences = re.split(r'(?<=[.!?])\s+', text)
+        if len(sentences) > 1:
+            first_sent = sentences[0].strip()
+            # If first sentence is an acknowledgment (short), make it the first bubble
+            if len(first_sent) < 100:
+                chunks = [first_sent, " ".join(sentences[1:]).strip()]
+            else:
+                chunks = _split_at_sentences(text)
+        else:
+            chunks = [text]
 
     # Clean up chunks
     chunks = [c.strip() for c in chunks if c.strip()]
