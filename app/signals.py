@@ -62,6 +62,36 @@ def detect_personality_type(messages: list) -> str:
         return "amiable"      # Vague, agreeable — wants safety
 
 
+def detect_objection_type(message: str) -> str:
+    """Detect the type of objection present in the message."""
+    text = message.lower()
+    objection_map = {
+        "price": ["price", "cost", "damage", "how much"],
+        "price_pressure": ["avoiding", "stop avoiding"],
+        "bad_experience": ["bad", "awful", "tried before", "chatbots"],
+        "tools_comparison": ["chatgpt", "zapier", "manychat", "va"],
+        "no_budget": ["budget", "no money"],
+        "ai_failure_fear": ["work", "wrong", "error", "fail"],
+        "sales_team": ["sales team", "already have"],
+        "business_hours": ["business hours", "weekends", "after hours"],
+        "proof": ["case study", "proof", "referrals", "clients"],
+        "setup_time": ["setup", "how long"],
+        "crm": ["crm", "hubspot", "salesforce", "ghl"],
+        "ai_readiness": ["ready", "ai isn't"],
+        "delayed_action": ["few months", "later"],
+        "small_business": ["small business", "too small"],
+        "skepticism": ["too good", "scam"],
+        "not_interested": ["not interested", "no thanks"],
+        "manual_process": ["manually", "manual"],
+        "send_info": ["more information", "send info", "website"]
+    }
+    
+    for obj_type, patterns in objection_map.items():
+        if any(p in text for p in patterns):
+            return obj_type
+    return ""
+
+
 def get_approach_instructions(interest: str, personality: str) -> str:
     """
     Return approach instructions to inject into LLM context.

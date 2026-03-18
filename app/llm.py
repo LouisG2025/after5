@@ -6,6 +6,9 @@ from typing import List, Dict, Any, Optional
 from openai import AsyncOpenAI
 from app.config import settings
 from app.tracker import AlbertTracker
+from app.conversation_library import get_relevant_example
+from app.signals import detect_personality_type, detect_objection_type
+from app.redis_client import redis_client
 
 tracker = AlbertTracker()
 
@@ -202,9 +205,31 @@ class LLMClient:
             if objection_context:
                 objection_context = "\n═══ OBJECTION HANDLING (DIAGNOSTIC) ═══\n" + objection_context
 
-            # Combine Core + Addons
-            system_prompt = core_prompt.replace("{{DYNAMIC_KNOWLEDGE}}", industry_context)
-            system_prompt = system_prompt.replace("{{DYNAMIC_OBJECTIONS}}", objection_context)
+        # 3. Dynamic Example Injection (Phase 2)
+        example_context = ""
+        try:
+            # Detect signals for example matching
+            history_contents = [m["content"] for m in session.get("history", []) if m["role"] == "user"]
+            personality = detect_personality_type(history_contents)
+            objection = detect_objection_type(message)
+            
+            example = await get_relevant_example(
+                redis_client.redis,
+                industry=industry,
+                stage=session.get("state", "opening"),
+                objection=objection,
+                personality=personality
+            )
+            
+            if example:
+                example_context = f"\n═══ REFERENCE CONVERSATION (LEARN FROM THIS TONE) ═══\n{example}\n"
+        except Exception as e:
+            print(f"[LLM] ❌ Error getting relevant example: {e}", flush=True)
+
+        # Combine Core + Addons
+        system_prompt = core_prompt.replace("{{DYNAMIC_KNOWLEDGE}}", industry_context)
+        system_prompt = system_prompt.replace("{{DYNAMIC_OBJECTIONS}}", objection_context)
+        system_prompt = system_prompt.replace("{{DYNAMIC_EXAMPLES}}", example_context)
 
         # Inject RAG context if available (Standard RAG)
         if knowledge_context:

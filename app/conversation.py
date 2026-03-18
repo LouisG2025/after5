@@ -185,11 +185,38 @@ async def process_conversation(phone: str, message: str, conversation_id: str = 
         # Step 15: Cleanup and background tasks
         await redis_client.save_session(phone, session)
         await redis_client.clear_generating(phone)
+        
+        # Phase 3: Auto-scoring on termination
+        if new_state == ConversationState.CLOSED:
+            # Determine outcome based on context if not explicit
+            outcome = "exit_clean"
+            if any(phrase in response_lower for phrase in ["no worries", "all the best"]):
+                outcome = "exit_clean"
+            # In a real scenario, we'd check if they booked (CONFIRMED state)
+            asyncio.create_task(on_conversation_end(phone, outcome, session, lead_id))
+
         asyncio.create_task(extract_bant(phone, session["history"]))
 
     except Exception as e:
         logger.critical("[Conversation] 🚨 CRITICAL ERROR processing %s: %s", phone, e, exc_info=True)
         await redis_client.clear_generating(phone)
+
+
+async def on_conversation_end(phone: str, outcome: str, session: dict, lead_id: str = None):
+    """Trigger scoring and training data collection when a conversation ends."""
+    try:
+        from app.conversation_scorer import score_conversation, save_for_training
+        
+        history = session.get("history", [])
+        if not history:
+            return
+            
+        score_results = await score_conversation(history, outcome)
+        if score_results.get("worthy"):
+            await save_for_training(redis_client.redis, phone, history, score_results, lead_id)
+            
+    except Exception as e:
+        logger.error(f"[Conversation] ❌ Error in on_conversation_end for {phone}: {e}")
 
 
 async def check_low_content(phone: str, message: str, session: dict) -> bool:
