@@ -50,14 +50,21 @@ async def process_conversation(phone: str, message: str, conversation_id: str = 
             import re
             logger.info("[Conversation] 🧪 Processing Simulation data from %s: %s", phone, message)
             
-            # Robust extraction using Regex (Look for start of lines or labels)
-            name_m = re.search(r'Name\s*[–-]\s*([^\n,]+)', message, re.I)
-            comp_m = re.search(r'Company(?:\s+name)?\s*[–-]\s*([^\n,]+)', message, re.I)
-            ind_m = re.search(r'Industry\s*[–-]\s*([^\n,]+)', message, re.I)
+            # Robust extraction using Regex (Look for labels in any line)
+            name_m = re.search(r'(?:Name|Naam)\s*[–-]\s*([^\n,]+)', message, re.I)
+            comp_m = re.search(r'(?:Company|Business|Agency)(?:\s+name)?\s*[–-]\s*([^\n,]+)', message, re.I)
+            ind_m = re.search(r'(?:Industry|Field|Sector)\s*[–-]\s*([^\n,]+)', message, re.I)
 
-            name = name_m.group(1).strip() if name_m else "Nihal"
-            company = comp_m.group(1).strip() if comp_m else "Horizon Estates"
-            industry = ind_m.group(1).strip() if ind_m else "Real Estate"
+            # Fallback parsing if no labels are found (comma/newline split)
+            if not any([name_m, comp_m, ind_m]):
+                parts = [p.strip() for p in re.split(r'[,\n]', message) if p.strip()]
+                name = parts[0] if len(parts) > 0 else "there"
+                company = parts[1] if len(parts) > 1 else "Horizon Estates"
+                industry = parts[2] if len(parts) > 2 else "Real Estate"
+            else:
+                name = name_m.group(1).strip() if name_m else "there"
+                company = comp_m.group(1).strip() if comp_m else "Horizon Estates"
+                industry = ind_m.group(1).strip() if ind_m else "Real Estate"
 
             fake_form = {
                 "first_name": name,
