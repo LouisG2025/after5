@@ -99,25 +99,13 @@ async def send_template_message(to: str, template_name: str, language_code: str 
 
 
 async def send_typing_indicator(to: str, message_id: str = "") -> bool:
-    """Send a typing indicator using sender_action."""
-    payload = {
-        "messaging_product": "whatsapp",
-        "to": _to_wa_phone(to),
-        "sender_action": "typing_on"
-    }
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.post(f"{BASE_URL}/messages", headers=_headers(), json=payload)
-            if resp.status_code == 200:
-                logger.info(f"Typing indicator sent to {to}")
-                return True
-            else:
-                # Some accounts might not support this yet, log and continue
-                logger.info(f"Typing indicator not supported/failed: {resp.status_code} - {resp.text}")
-                return False
-    except Exception as e:
-        logger.error(f"Typing indicator error: {e}")
-        return False
+    """
+    WhatsApp Cloud API does not support typing indicators via the /messages endpoint.
+    The sender_action field is specific to Facebook Messenger, not WhatsApp Cloud API.
+    Human-like delay is handled in send_chunked_messages instead.
+    """
+    logger.debug(f"[Typing] Skipped (not supported by WhatsApp Cloud API) for {to}")
+    return False
 
 
 async def mark_as_read(message_id: str) -> None:

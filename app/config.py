@@ -20,7 +20,7 @@ class Settings(BaseSettings):
 
     # OpenRouter
     OPENROUTER_API_KEY: str = os.getenv("OPENROUTER_API_KEY", "")
-    OPENROUTER_PRIMARY_MODEL: str = "anthropic/claude-3.5-sonnet"
+    OPENROUTER_PRIMARY_MODEL: str = "openai/gpt-4o-mini"
     OPENROUTER_FALLBACK_MODEL: str = "openai/gpt-4o-mini"
     OPENROUTER_BANT_MODEL: str = "openai/gpt-4o-mini"
 
