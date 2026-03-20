@@ -44,6 +44,48 @@ async def process_conversation(phone: str, message: str, conversation_id: str = 
         lead_data = session.get("lead_data", {})
         lead_id = lead_data.get("id")
 
+        # Handle Simulation Data collection if #reset was called
+        if session.get("sim_collecting"):
+            from app.outbound import send_initial_outreach
+            logger.info("[Conversation] 🧪 Processing Simulation data from %s: %s", phone, message)
+            
+            # Simple splitter: commas or spaces
+            parts = [p.strip() for p in message.split(",")]
+            name = parts[0] if len(parts) > 0 else "there"
+            company = parts[1] if len(parts) > 1 else "Horizon Estates"
+            industry = parts[2] if len(parts) > 2 else "Real Estate"
+
+            fake_form = {
+                "first_name": name,
+                "company": company,
+                "industry": industry,
+                "role": "Director",
+                "message": f"I want to automate my {industry} agency discovery calls.",
+                "source": "Interactive Reset Simulation"
+            }
+            
+            # Update lead in Supabase with these provided details
+            if lead_id:
+                client = await supabase_client.get_client()
+                await client.table("leads").update({
+                    "first_name": name,
+                    "company": company,
+                    "industry": industry,
+                    "form_message": fake_form["message"]
+                }).eq("id", lead_id).execute()
+
+            # Trigger outreach in background task (15s delay inside)
+            print(f"[Conversation] 🧪 Triggering interactive outbound flow for {phone} using {company}", flush=True)
+            asyncio.create_task(send_initial_outreach(name, phone, company, fake_form))
+            
+            # Clear sim flag
+            session["sim_collecting"] = False
+            await redis_client.save_session(phone, session)
+            
+            await send_message(phone, f"Perfect! I've updated your details to **{name}** from **{company}**. 🚀\n\nOutbound simulation starting in 15 seconds. Hold tight!")
+            await redis_client.clear_generating(phone)
+            return
+
         # Step 3: Handle /reset and #reset commands
         cmd = message.strip().lower()
         if cmd == "/reset" or cmd == "#reset":
@@ -55,7 +97,8 @@ async def process_conversation(phone: str, message: str, conversation_id: str = 
                 "history": [],
                 "turn_count": 0,
                 "lead_data": lead_data, # Reuse existing lead_data (phone, name etc)
-                "low_content_count": 0
+                "low_content_count": 0,
+                "sim_collecting": (cmd == "#reset") # Flag for interactive simulation
             }
             await redis_client.save_session(phone, session)
             
@@ -63,34 +106,9 @@ async def process_conversation(phone: str, message: str, conversation_id: str = 
             if lead_id:
                 await tracker.update_state(lead_id, "Opening")
 
-            # 3. If #reset, trigger fake outbound flow
+            # 3. Handle specific command replies
             if cmd == "#reset":
-                from app.outbound import send_initial_outreach
-                name = lead_data.get("first_name") or "there"
-                company = "Horizon Estates"
-                fake_form = {
-                    "first_name": name,
-                    "company": company,
-                    "industry": "Real Estate",
-                    "role": "Director",
-                    "message": "I want to automate my real estate agency discovery calls.",
-                    "source": "Fake Reset Trigger"
-                }
-                
-                # Update lead in Supabase with fake data first
-                if lead_id:
-                    client = await supabase_client.get_client()
-                    await client.table("leads").update({
-                        "company": company,
-                        "industry": "Real Estate",
-                        "form_message": fake_form["message"]
-                    }).eq("id", lead_id).execute()
-
-                # Trigger outreach in background task
-                print(f"[Conversation] 🧪 Triggering fake outbound flow for {phone}", flush=True)
-                asyncio.create_task(send_initial_outreach(name, phone, company, fake_form))
-                
-                await send_message(phone, "🚀 #reset: Simulation started! I've cleared your session and triggered a fake form submission for 'Horizon Estates'. Expect the outbound flow to start in 15 seconds...")
+                await send_message(phone, "🚀 #reset: Simulation started! Let's get your details.\n\nType your **Name, Company Name, Industry** (e.g. Nihal, Horizon Estates, Real Estate)")
             else:
                 await send_message(phone, "I've reset the conversation for you. Please clear the chat on your end and start a new one whenever you're ready.")
             
