@@ -89,38 +89,75 @@ def format_message(text: str, is_template: bool = False) -> str:
     sentences = re.split(r'(?<=[.!?])\s+', text)
     sentences = [s.strip() for s in sentences if s.strip()]
 
-    # Short messages (1-2 sentences) pass through with minimal formatting
-    if len(sentences) <= 2:
+    # Sub-process long sentences to split run-ons with internal line breaks
+    processed_sentences = []
+    
+    def recursive_split(s: str) -> list[str]:
+        if len(s) <= 100 or s.rstrip().endswith("?"):
+            return [s]
+        
+        # Look for logical break points (and, but, so, which, where, or, specifically, especially)
+        break_patterns = [
+            r'\s+and\s+', r'\s+but\s+', r'\s+so\s+', r'\s+which\s+', 
+            r'\s+where\s+', r'\s+or\s+', r',\s+(?:some|sometimes|especially|specifically|including)\s+'
+        ]
+        for pattern in break_patterns:
+            matches = list(re.finditer(pattern, s, re.IGNORECASE))
+            if matches:
+                # Find the most "central" match to split on
+                best_match = min(matches, key=lambda m: abs(m.start() - len(s)/2))
+                if best_match.start() > 30 and best_match.start() < len(s) - 30:
+                    split_idx = best_match.start()
+                    # If splitting on a comma, keep comma with part 1
+                    if s[split_idx] == ',':
+                        split_idx += 1
+                    
+                    part1 = s[:split_idx].strip()
+                    part2 = s[split_idx:].strip()
+                    return recursive_split(part1) + recursive_split(part2)
+        return [s]
+
+    for s in sentences:
+        processed_sentences.extend(recursive_split(s))
+    
+    sentences = processed_sentences
+
+    # 2+ sentences/parts: group into short paragraphs with blank lines between
+    if len(sentences) >= 2:
+        paragraphs = []
+        current_para = []
+
+        for i, sentence in enumerate(sentences):
+            is_last = (i == len(sentences) - 1)
+            is_question = sentence.rstrip().endswith("?")
+            
+            # If a part is very long, it deserves its own paragraph regardless
+            is_very_long = len(sentence) > 80
+
+            # Questions get their own paragraph
+            if is_question and current_para:
+                paragraphs.append(" ".join(current_para))
+                current_para = [sentence]
+            elif is_very_long and current_para:
+                paragraphs.append(" ".join(current_para))
+                current_para = [sentence]
+            else:
+                current_para.append(sentence)
+
+            # Break into new paragraph every 1-2 parts to keep it scannable
+            # If current_para is long or has 2 items, break it
+            if (len(current_para) >= 2 or (current_para and len(current_para[0]) > 80)) and not is_last and not is_question:
+                paragraphs.append(" ".join(current_para))
+                current_para = []
+
+        if current_para:
+            paragraphs.append(" ".join(current_para))
+
+        # Join paragraphs with blank line
+        result = "\n\n".join(paragraphs)
+    else:
+        # 1 part: join normally
         result = " ".join(sentences)
-        if result.endswith("."):
-            result = result[:-1]
-        return result
-
-    # 3+ sentences: group into short paragraphs with blank lines between
-    paragraphs = []
-    current_para = []
-
-    for i, sentence in enumerate(sentences):
-        is_last = (i == len(sentences) - 1)
-        is_question = sentence.rstrip().endswith("?")
-
-        # Questions get their own paragraph
-        if is_question and current_para:
-            paragraphs.append(" ".join(current_para))
-            current_para = [sentence]
-        else:
-            current_para.append(sentence)
-
-        # Break into new paragraph every 2 sentences to keep it scannable
-        if len(current_para) >= 2 and not is_last and not is_question:
-            paragraphs.append(" ".join(current_para))
-            current_para = []
-
-    if current_para:
-        paragraphs.append(" ".join(current_para))
-
-    # Join paragraphs with blank line (WhatsApp renders \n\n as visible gap)
-    result = "\n\n".join(paragraphs)
 
     # Drop full stop from the very last character
     if result.endswith("."):
