@@ -487,7 +487,7 @@ async def build_enhanced_context(session: dict, lead_data: dict, message: str, k
             form_details.append(f"{k.replace('_', ' ').capitalize()}: {val}")
     
     if form_details:
-        instruction += f"\nFORM DATA SUBMITTED BY LEAD:\n" + "\n".join(form_details) + "\nUse this information to skip discovery questions we already have answers for.\n"
+        instruction += f"\nFORM DATA SUBMITTED BY LEAD:\n" + "\n".join(form_details) + "\nThis is ONLY background context for you. Do NOT assume anything from this data. Do NOT reference their industry, lead volume, problems, or terminology unless THEY mention it first in the conversation. The industry field tells you their general space, nothing else. Never say things like 'property enquiries', 'discovery calls', 'viewings', 'qualifying leads', or any industry-specific term unless the lead used that term first. Always ask what they do and what they need. NEVER skip discovery questions based on form data. If you catch yourself about to reference something from form data that the lead hasn't said, STOP and ask a genuine question instead.\n"
 
     # Append everything to the system message
     if messages and messages[0]["role"] == "system":

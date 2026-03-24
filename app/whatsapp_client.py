@@ -82,13 +82,13 @@ async def send_chunked_messages(
             await send_typing_indicator(to, message_id)
             
             # Check for interrupts during typing
-            intervals = int(seq["typing_delay"] / 1.0)
+            intervals = int(seq["typing_delay"] / 0.5)
             for _ in range(intervals):
-                await asyncio.sleep(1.0)
+                await asyncio.sleep(0.5)
                 if await redis_client.has_new_messages(to):
                     logger.info(f"Interrupt: New message during typing for {to}. Aborting.")
                     return
-            await asyncio.sleep(seq["typing_delay"] % 1.0)
+            await asyncio.sleep(seq["typing_delay"] % 0.5)
 
         # 5. Review Pause
         if seq["review_pause"] > 0:
