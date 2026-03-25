@@ -14,6 +14,7 @@ from app.models import ConversationState
 from app.tracker import AlbertTracker
 from app.chunker import chunk_message, calculate_typing_delay, format_message
 from app.templates import OUTREACH_TEMPLATES, FOLLOW_UP_TEMPLATE
+from app.phone_utils import normalize_phone
 import random
 
 logger = logging.getLogger(__name__)
@@ -25,8 +26,7 @@ async def send_initial_outreach(name: str, phone_raw: str, company: str, form_da
         tracker = AlbertTracker()
         
         # Normalize phone to internal format: whatsapp:+[digits]
-        digits = "".join(filter(str.isdigit, str(phone_raw)))
-        sender_phone = f"whatsapp:+{digits}"
+        sender_phone = normalize_phone(phone_raw)
 
         # 1. Save to Supabase via Tracker (or get existing)
         lead = await tracker.get_lead_by_phone(sender_phone)
