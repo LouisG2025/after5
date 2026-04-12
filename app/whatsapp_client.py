@@ -95,8 +95,8 @@ async def send_chunked_messages(
         if seq["review_pause"] > 0:
             await asyncio.sleep(seq["review_pause"])
 
-        # 6. Send Bubble
-        formatted_chunk = format_message(chunk)
+        # 6. Send Bubble (pass incoming_text for context-aware AI disclosure filter)
+        formatted_chunk = format_message(chunk, last_user_message=incoming_text)
         await send_message(to, formatted_chunk)
 
 

@@ -28,7 +28,9 @@ def test_chunking():
     print(f"Legacy: {chunks3}")
     assert len(chunks3) == 2
     
-    # Test 4: Long message sentence split (> 200 chars)
+    # Test 4: Long message WITHOUT explicit markers — per brief, Albert only splits
+    # on explicit ||| markers. Length-based auto-splitting was intentionally removed.
+    # The chunker should trust the LLM decision and return a single chunk.
     msg4 = (
         "This is a first sentence that is quite long and rambling. "
         "This is a second sentence that adds even more detail to the conversation. "
@@ -36,8 +38,8 @@ def test_chunking():
         "This is a fourth sentence, just for good measure, to make sure it definitely hits the 200 character limit of our chunking logic."
     )
     chunks4 = chunk_message(msg4)
-    print(f"Sentence split (length {len(msg4)}): {len(chunks4)} chunks")
-    assert len(chunks4) > 1
+    print(f"Long message without markers (length {len(msg4)}): {len(chunks4)} chunk(s)")
+    assert len(chunks4) == 1, "Long messages without ||| markers should stay as one chunk"
     
     # Test 5: Hard cap 3
     msg5 = "One|||Two|||Three|||Four|||Five"

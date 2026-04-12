@@ -170,6 +170,44 @@ class RedisClient:
     async def mark_calendly_sent(self, phone: str):
         await self.redis.set(f"calendly_sent:{phone}", "1", ex=86400 * 7)
 
+    # ---------- Lead typing presence tracking (for interrupt handling) ----------
+    async def set_lead_typing(self, phone: str):
+        """Mark that the lead has started typing. Stores start + last-seen timestamps."""
+        try:
+            now = str(time.time())
+            # Only set start_ts if not already typing
+            if not await self.redis.exists(f"lead_typing_start:{phone}"):
+                await self.redis.set(f"lead_typing_start:{phone}", now, ex=60)
+            await self.redis.set(f"lead_typing_last:{phone}", now, ex=60)
+            await self.redis.delete(f"lead_typing_stop:{phone}")
+        except Exception as e:
+            print(f"[Redis] ❌ set_lead_typing failed: {e}", flush=True)
+
+    async def clear_lead_typing(self, phone: str):
+        """Mark that the lead has stopped typing (without sending)."""
+        try:
+            await self.redis.set(f"lead_typing_stop:{phone}", str(time.time()), ex=60)
+            await self.redis.delete(f"lead_typing_start:{phone}", f"lead_typing_last:{phone}")
+        except Exception as e:
+            print(f"[Redis] ❌ clear_lead_typing failed: {e}", flush=True)
+
+    async def get_lead_typing_state(self, phone: str) -> Dict[str, Any]:
+        """
+        Return current typing state for the lead.
+        Returns dict with: is_typing (bool), started_at (float), stopped_at (float)
+        """
+        try:
+            start = await self.redis.get(f"lead_typing_start:{phone}")
+            stop = await self.redis.get(f"lead_typing_stop:{phone}")
+            return {
+                "is_typing": bool(start),
+                "started_at": float(start) if start else 0.0,
+                "stopped_at": float(stop) if stop else 0.0,
+            }
+        except Exception as e:
+            print(f"[Redis] ❌ get_lead_typing_state failed: {e}", flush=True)
+            return {"is_typing": False, "started_at": 0.0, "stopped_at": 0.0}
+
     async def check_and_clear_stale_generation(self, phone: str):
         """
         If generating flag has been set for more than 2 minutes,

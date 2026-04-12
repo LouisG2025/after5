@@ -58,13 +58,80 @@ def chunk_message(text: str, is_template: bool = False) -> list[str]:
     return chunks or [text]
 
 
-def format_message(text: str, is_template: bool = False) -> str:
+# Safety-net patterns for AI self-disclosure leakage.
+# Per Louis's brief: Albert must never volunteer that he's AI unless directly asked.
+# These patterns strip the offending phrase when the LLM leaks them unprompted.
+_AI_DISCLOSURE_PATTERNS = [
+    r"\b(?:i'?m|i am)\s+(?:an?\s+)?(?:ai|a\s+bot|a\s+robot|a\s+chatbot|an?\s+assistant|an?\s+automated|a\s+computer|a\s+program|a\s+system)\b[^.!?]*[.!?]?",
+    r"\b(?:yeah|haha|actually|honestly|to be fair|tbh),?\s+i'?m\s+(?:ai|a\s+bot|a\s+robot|a\s+chatbot)\b[^.!?]*[.!?]?",
+    r"\bas an ai\b[^.!?]*[.!?]?",
+    r"\b(?:yes|yeah|nope|no),?\s+(?:i'?m|i am)\s+(?:ai|a\s+bot|a\s+robot|a\s+chatbot)\b[^.!?]*[.!?]?",
+    r"\b(?:albert|i)\s+(?:is|am)\s+(?:ai|an ai|a bot|a robot|a chatbot)\b[^.!?]*[.!?]?",
+]
+
+
+_USER_ASKED_ABOUT_AI_PATTERNS = [
+    r"\bare you (?:an? )?(?:ai|bot|robot|chatbot|human|real|person|automated|machine|computer)\b",
+    r"\bis this (?:an? )?(?:ai|bot|chatbot|automated)\b",
+    r"\bam i (?:talking|chatting|speaking) (?:to|with) (?:an? )?(?:ai|bot|robot|human|real person|machine)\b",
+    r"\byou (?:a |an )?(?:ai|bot|robot|chatbot|computer|machine)\??$",
+    r"\breal person\b",
+    r"\bwho am i (?:talking|speaking) to\b",
+]
+
+
+def user_asked_about_ai(user_message: str) -> bool:
+    """Return True if the lead's message is directly asking whether Albert is AI/bot."""
+    if not user_message:
+        return False
+    low = user_message.lower()
+    for pattern in _USER_ASKED_ABOUT_AI_PATTERNS:
+        if re.search(pattern, low):
+            return True
+    return False
+
+
+def strip_ai_disclosure(text: str, user_asked: bool = False) -> str:
+    """
+    Strip unsolicited AI self-disclosure from Albert's replies.
+
+    Per Louis's brief (system_prompt.txt line 537):
+      "If they don't ask, don't volunteer it."
+
+    When user_asked=True, the lead directly asked "are you AI?" so Albert
+    is allowed to acknowledge. The filter is a no-op in that case.
+
+    Otherwise we strip any self-disclosure phrases that slipped past the
+    prompt so Albert never volunteers his AI status unprompted.
+    """
+    if not text:
+        return text
+    if user_asked:
+        return text  # Albert is allowed to acknowledge when directly asked
+
+    cleaned = text
+    for pattern in _AI_DISCLOSURE_PATTERNS:
+        cleaned = re.sub(pattern, "", cleaned, flags=re.IGNORECASE)
+    # Collapse whitespace + dangling punctuation left behind
+    cleaned = re.sub(r"\s{2,}", " ", cleaned)
+    cleaned = re.sub(r"^[\s,.!?]+", "", cleaned)
+    cleaned = cleaned.strip()
+    # If stripping gutted the whole message, fall back to a safe redirect
+    if not cleaned or len(cleaned) < 4:
+        return "anyway, what would you like to know"
+    return cleaned
+
+
+def format_message(text: str, is_template: bool = False, last_user_message: str = "") -> str:
     """
     Format a single message bubble for readability within WhatsApp.
     Adds line breaks between distinct thoughts within one message.
     This is FORMATTING not CHUNKING. The message stays as one bubble.
 
     If is_template is True, bypass all formatting and return as-is.
+
+    If last_user_message is provided, AI disclosure stripping becomes
+    context-aware (allowed when the lead directly asked about AI).
 
     Rules:
     - 1 to 2 sentences pass through untouched
@@ -80,6 +147,10 @@ def format_message(text: str, is_template: bool = False) -> str:
     # Template bypass: never reformat the intro template
     if is_template:
         return text
+
+    # Strip unsolicited AI self-disclosure (safety net per Louis's brief).
+    # Skipped if the lead directly asked whether we're AI.
+    text = strip_ai_disclosure(text, user_asked=user_asked_about_ai(last_user_message))
 
     # If LLM already included line breaks, preserve them and just clean up
     if "\n" in text:
@@ -213,7 +284,7 @@ def calculate_reading_delay(incoming_text: str) -> float:
     """
     Calculate how long Albert takes to read the incoming message.
     - 0.04 seconds per character
-    - Minimum 4 seconds, maximum 10 seconds
+    - Minimum 4 seconds, maximum 15 seconds (per brief spec)
 
     IMPORTANT: The LLM call should fire simultaneously with the
     blue tick, meaning it runs in parallel during this reading delay.
@@ -223,7 +294,7 @@ def calculate_reading_delay(incoming_text: str) -> float:
 
     reading_time = char_count * 0.04
 
-    return max(4.0, min(10.0, reading_time + random.uniform(-0.3, 0.3)))
+    return max(4.0, min(15.0, reading_time + random.uniform(-0.3, 0.3)))
 
 
 def calculate_typing_delay(text: str) -> float:

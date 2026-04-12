@@ -1,7 +1,9 @@
 import asyncio
 import logging
 import random
+import time
 from fastapi import APIRouter, Request, Response, BackgroundTasks
+from pydantic import BaseModel
 from app.config import settings
 from app.redis_client import redis_client
 from app.messaging import mark_as_read, send_message, send_chunked_messages, send_typing_indicator
@@ -12,6 +14,135 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 MAX_INTERRUPT_RETRIES = 2
+
+
+class BaileysIncoming(BaseModel):
+    """Payload shape emitted by the Baileys Node bridge."""
+    phone: str           # digits only, e.g. "447700900000"
+    name: str = ""
+    text: str
+    message_id: str = ""
+    timestamp: int = 0
+
+
+def _is_phone_allowed(phone_digits: str) -> bool:
+    """
+    Check if a phone number is on the BAILEYS_ALLOWED_PHONES allowlist.
+    When the list is empty/unset, everyone is allowed (production behaviour).
+    Comparison strips non-digits from both sides so various formats work.
+    """
+    raw = (settings.BAILEYS_ALLOWED_PHONES or "").strip()
+    if not raw:
+        return True  # no allowlist configured → allow everyone
+
+    import re as _re
+    incoming = _re.sub(r"\D", "", phone_digits or "")
+    allowed = {_re.sub(r"\D", "", p) for p in raw.split(",") if p.strip()}
+    # Exact match or suffix match (handles cases where one has country code, the other doesn't)
+    if incoming in allowed:
+        return True
+    for a in allowed:
+        if a and (incoming.endswith(a) or a.endswith(incoming)):
+            return True
+    return False
+
+
+class BaileysPresence(BaseModel):
+    """Presence update from the Baileys bridge (lead typing / stopped)."""
+    phone: str
+    state: str           # "composing" | "paused" | "available" | "unavailable"
+
+
+@router.post("/baileys/presence")
+async def baileys_presence(p: BaileysPresence):
+    """
+    Called by the Baileys Node service when the lead's typing state changes.
+    Updates Redis so the interrupt logic in send_chunked_messages can react.
+    """
+    phone = f"whatsapp:+{p.phone}"
+    state = (p.state or "").lower()
+    if state == "composing":
+        await redis_client.set_lead_typing(phone)
+    elif state in ("paused", "available", "unavailable"):
+        await redis_client.clear_lead_typing(phone)
+    return {"status": "ok", "state": state}
+
+
+@router.post("/baileys/incoming")
+async def baileys_incoming(msg: BaileysIncoming, background_tasks: BackgroundTasks):
+    """
+    Receive a message from the local Baileys bridge and run it through the
+    same buffering + processing pipeline as the Cloud API webhook.
+    Returns 200 immediately; processing happens async.
+    """
+    if not msg.text or not msg.text.strip():
+        return {"status": "ignored", "reason": "empty"}
+
+    # Allowlist check — only reply to phones on BAILEYS_ALLOWED_PHONES when set
+    if not _is_phone_allowed(msg.phone):
+        logger.info(f"[Baileys] Ignored {msg.phone} — not on allowlist")
+        return {"status": "ignored", "reason": "not_on_allowlist"}
+
+    sender_phone = f"whatsapp:+{msg.phone}"
+    message_id = msg.message_id or f"baileys-{int(time.time() * 1000)}"
+    message_ts = msg.timestamp or int(time.time())
+
+    # 1. Dedup
+    dedup_key = f"dedup:{message_id}"
+    if await redis_client.redis.get(dedup_key):
+        return {"status": "duplicate"}
+    await redis_client.redis.set(dedup_key, "1", ex=86400)
+
+    # 2. Map message_id → phone so baileys_client.mark_as_read can look it up
+    await redis_client.redis.set(f"msgid_phone:{message_id}", sender_phone, ex=3600)
+
+    # 3. Staleness
+    age = int(time.time()) - message_ts
+    if message_ts and age > 300:
+        return {"status": "ignored", "reason": "stale"}
+
+    # 4. Stale-generation cleanup
+    await redis_client.check_and_clear_stale_generation(sender_phone)
+
+    # 5. CLOSED-state handling (same logic as /webhook)
+    session = await redis_client.get_session(sender_phone)
+    cmd_check = msg.text.strip().lower()
+    if session and session.get("state") == ConversationState.CLOSED and not cmd_check.startswith(("/reset", "#reset")):
+        last_updated = session.get("last_updated")
+        if last_updated:
+            from datetime import datetime
+            try:
+                lu_dt = datetime.fromisoformat(last_updated.replace("Z", "+00:00"))
+                diff = (datetime.utcnow().replace(tzinfo=None) - lu_dt.replace(tzinfo=None)).total_seconds()
+                if diff < 86400:
+                    return {"status": "ignored", "reason": "closed_state"}
+                lead_name = session.get("lead_data", {}).get("first_name", "there")
+                returning_template = f"Hey {lead_name}, Albert here again from After5. Glad you came back — what changed?"
+                await send_message(sender_phone, returning_template)
+                new_session = {
+                    "state": ConversationState.OPENING,
+                    "history": [{"role": "assistant", "content": returning_template}],
+                    "turn_count": 1,
+                    "lead_data": session.get("lead_data", {}),
+                }
+                await redis_client.save_session(sender_phone, new_session)
+                return {"status": "reopened"}
+            except Exception as e:
+                logger.warning(f"[Baileys] CLOSED cooldown check failed: {e}")
+
+    logger.info(f"[Baileys IN] {sender_phone} ({msg.name}): {msg.text[:80]}")
+
+    # 6. Buffer + schedule processing — identical flow to /webhook
+    batch_id = await redis_client.buffer_message(sender_phone, msg.text)
+    await redis_client.redis.set(f"last_msg_id:{sender_phone}", message_id, ex=300)
+    await redis_client.redis.set(f"last_name:{sender_phone}", msg.name, ex=300)
+
+    background_tasks.add_task(_delayed_buffer_process, sender_phone, batch_id, message_ts)
+    if not await redis_client.redis.get(f"buffer_first:{sender_phone}"):
+        background_tasks.add_task(_hard_max_check, sender_phone, message_ts)
+    background_tasks.add_task(_background_tracker_log, sender_phone, msg.name, msg.text)
+
+    return {"status": "ok"}
 
 @router.get("/webhook")
 async def verify_webhook(request: Request):

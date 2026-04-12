@@ -1,0 +1,273 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Albert — After5 Local Chat Tester</title>
+<style>
+  :root {
+    --wa-bg: #0b141a;
+    --wa-panel: #111b21;
+    --wa-header: #202c33;
+    --wa-bubble-in: #202c33;
+    --wa-bubble-out: #005c4b;
+    --wa-text: #e9edef;
+    --wa-muted: #8696a0;
+    --wa-accent: #00a884;
+    --wa-input: #2a3942;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: var(--wa-bg); color: var(--wa-text); }
+
+  .wrap {
+    display: flex; flex-direction: column;
+    max-width: 480px; height: 100vh;
+    margin: 0 auto;
+    background: var(--wa-panel);
+    border-left: 1px solid #1f2c33;
+    border-right: 1px solid #1f2c33;
+  }
+
+  .header {
+    display: flex; align-items: center; gap: 12px;
+    padding: 10px 16px;
+    background: var(--wa-header);
+    border-bottom: 1px solid #1f2c33;
+  }
+  .avatar {
+    width: 40px; height: 40px; border-radius: 50%;
+    background: var(--wa-accent);
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 600; color: #fff;
+  }
+  .name { font-size: 16px; font-weight: 500; }
+  .status { font-size: 12px; color: var(--wa-muted); }
+  .mode-badge {
+    margin-left: auto;
+    font-size: 10px; padding: 3px 8px; border-radius: 10px;
+    background: #3b4a54; color: var(--wa-muted);
+    text-transform: uppercase; letter-spacing: 0.5px;
+  }
+  .mode-badge.real { background: #0a5c2e; color: #b9f6ca; }
+  .mode-badge.demo { background: #5c3b0a; color: #ffe0b2; }
+
+  .chat {
+    flex: 1; overflow-y: auto; padding: 16px;
+    background-image:
+      linear-gradient(rgba(11, 20, 26, 0.92), rgba(11, 20, 26, 0.92)),
+      radial-gradient(circle at 20% 30%, #1a2a33 0%, transparent 50%),
+      radial-gradient(circle at 80% 70%, #1a2a33 0%, transparent 50%);
+    display: flex; flex-direction: column; gap: 4px;
+  }
+
+  .bubble {
+    max-width: 80%;
+    padding: 8px 12px;
+    border-radius: 10px;
+    font-size: 14.5px;
+    line-height: 1.35;
+    word-wrap: break-word;
+    position: relative;
+    animation: fadein 0.25s ease-out;
+  }
+  .bubble.in {
+    align-self: flex-start;
+    background: var(--wa-bubble-in);
+    border-top-left-radius: 2px;
+  }
+  .bubble.out {
+    align-self: flex-end;
+    background: var(--wa-bubble-out);
+    border-top-right-radius: 2px;
+  }
+  .bubble + .bubble.in { margin-top: 2px; }
+  .bubble + .bubble.out { margin-top: 2px; }
+  .bubble .time {
+    display: block;
+    font-size: 10px; color: var(--wa-muted);
+    text-align: right; margin-top: 4px;
+  }
+  .bubble a { color: #53bdeb; text-decoration: underline; word-break: break-all; }
+
+  @keyframes fadein { from { opacity: 0; transform: translateY(4px);} to {opacity: 1; transform: none;} }
+
+  .typing {
+    align-self: flex-start;
+    background: var(--wa-bubble-in);
+    padding: 10px 14px;
+    border-radius: 10px;
+    border-top-left-radius: 2px;
+    display: flex; gap: 4px;
+  }
+  .typing span {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--wa-muted);
+    animation: blink 1.2s infinite ease-in-out;
+  }
+  .typing span:nth-child(2) { animation-delay: 0.2s; }
+  .typing span:nth-child(3) { animation-delay: 0.4s; }
+  @keyframes blink { 0%, 60%, 100% {opacity: 0.3;} 30% {opacity: 1;} }
+
+  .composer {
+    display: flex; gap: 8px; padding: 10px 12px;
+    background: var(--wa-header); border-top: 1px solid #1f2c33;
+  }
+  .composer input {
+    flex: 1; background: var(--wa-input); border: none;
+    border-radius: 20px; padding: 10px 14px;
+    color: var(--wa-text); font-size: 14.5px; outline: none;
+  }
+  .composer button {
+    background: var(--wa-accent); border: none; color: #fff;
+    width: 42px; height: 42px; border-radius: 50%;
+    font-size: 18px; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .composer button:hover { filter: brightness(1.1); }
+  .composer button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  .reset-btn {
+    background: transparent; border: 1px solid var(--wa-muted);
+    color: var(--wa-muted); font-size: 11px;
+    padding: 4px 10px; border-radius: 12px; cursor: pointer;
+  }
+  .reset-btn:hover { color: var(--wa-text); border-color: var(--wa-text); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="header">
+    <div class="avatar">A</div>
+    <div>
+      <div class="name">Albert</div>
+      <div class="status">After5 Digital · online</div>
+    </div>
+    <button class="reset-btn" onclick="resetChat()">Reset</button>
+    <span class="mode-badge" id="modeBadge">loading</span>
+  </div>
+
+  <div class="chat" id="chat">
+    <!-- Opening hardcoded message, per brief: "Phase 1: Hardcoded template, no LLM" -->
+  </div>
+
+  <form class="composer" onsubmit="send(event)">
+    <input id="msg" type="text" placeholder="Type a message" autocomplete="off" autofocus />
+    <button type="submit" id="sendBtn">&#10148;</button>
+  </form>
+</div>
+
+<script>
+const chat = document.getElementById("chat");
+const input = document.getElementById("msg");
+const sendBtn = document.getElementById("sendBtn");
+const modeBadge = document.getElementById("modeBadge");
+
+const PHONE = "test-user";
+
+// Hardcoded opener per brief (Phase 1 - no LLM)
+const OPENER = "Hey mate, Albert here from After5 Digital, saw you filled the form, what do you do";
+
+function nowTime() {
+  const d = new Date();
+  return d.getHours().toString().padStart(2, "0") + ":" + d.getMinutes().toString().padStart(2, "0");
+}
+
+function appendBubble(text, side) {
+  const b = document.createElement("div");
+  b.className = "bubble " + side;
+  // Linkify URLs
+  const html = text.replace(/(https?:\/\/[^\s]+)/g, '<a href="$1" target="_blank">$1</a>');
+  b.innerHTML = html + '<span class="time">' + nowTime() + '</span>';
+  chat.appendChild(b);
+  chat.scrollTop = chat.scrollHeight;
+}
+
+function showTyping() {
+  const t = document.createElement("div");
+  t.className = "typing";
+  t.id = "typingIndicator";
+  t.innerHTML = "<span></span><span></span><span></span>";
+  chat.appendChild(t);
+  chat.scrollTop = chat.scrollHeight;
+}
+
+function hideTyping() {
+  const t = document.getElementById("typingIndicator");
+  if (t) t.remove();
+}
+
+async function send(e) {
+  e.preventDefault();
+  const text = input.value.trim();
+  if (!text) return;
+
+  appendBubble(text, "out");
+  input.value = "";
+  sendBtn.disabled = true;
+
+  // Simulate Albert "reading" delay (0.04s/char, min 1s for test UI)
+  const readDelay = Math.min(Math.max(text.length * 40, 1000), 3000);
+  await new Promise(r => setTimeout(r, readDelay));
+  showTyping();
+
+  try {
+    const res = await fetch("/test-chat", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({phone: PHONE, message: text})
+    });
+    const data = await res.json();
+
+    modeBadge.textContent = data.mode;
+    modeBadge.className = "mode-badge " + data.mode;
+
+    // Show each chunk as its own bubble with typing delay between
+    for (let i = 0; i < data.chunks.length; i++) {
+      const chunk = data.chunks[i];
+      const typeDelay = Math.min(Math.max(chunk.length * 50, 800), 2500);
+      await new Promise(r => setTimeout(r, typeDelay));
+      if (i === 0) hideTyping();
+      appendBubble(chunk, "in");
+      if (i < data.chunks.length - 1) {
+        showTyping();
+      }
+    }
+  } catch (err) {
+    hideTyping();
+    appendBubble("⚠️ Error reaching backend: " + err.message, "in");
+  } finally {
+    sendBtn.disabled = false;
+    input.focus();
+  }
+}
+
+async function resetChat() {
+  await fetch("/test-chat/reset?phone=" + PHONE, {method: "POST"});
+  chat.innerHTML = "";
+  bootOpener();
+}
+
+async function bootOpener() {
+  // Check mode first
+  try {
+    const res = await fetch("/test-chat", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({phone: "__probe__", message: "ping"})
+    });
+    const data = await res.json();
+    modeBadge.textContent = data.mode;
+    modeBadge.className = "mode-badge " + data.mode;
+    await fetch("/test-chat/reset?phone=__probe__", {method: "POST"});
+  } catch (e) {
+    modeBadge.textContent = "offline";
+  }
+
+  // Fire opener bubble after slight delay
+  setTimeout(() => appendBubble(OPENER, "in"), 400);
+}
+
+bootOpener();
+</script>
+</body>
+</html>

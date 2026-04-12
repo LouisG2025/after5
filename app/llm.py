@@ -109,8 +109,8 @@ class LLMClient:
         return round(total, 6)
 
     async def call_llm(
-        self, 
-        messages: List[Dict[str, str]], 
+        self,
+        messages: List[Dict[str, str]],
         model: Optional[str] = None,
         lead_id: Optional[str] = None,
         conversation_state: str = "Opening",
@@ -118,7 +118,31 @@ class LLMClient:
         company: str = "",
         **kwargs
     ) -> str:
-        """Calls OpenRouter via Helicone proxy and logs to Supabase."""
+        """Calls the configured LLM provider. Supports Gemini (free tier) and OpenRouter."""
+        # Route to Gemini when configured — used for local dev because Gemini's
+        # free tier is much more generous than OpenRouter's.
+        if (settings.LLM_PROVIDER or "").lower() == "gemini" and settings.GEMINI_API_KEY:
+            from app.gemini_client import gemini_chat
+            system_prompt = ""
+            conversation = []
+            for m in messages:
+                if m.get("role") == "system":
+                    system_prompt += (m.get("content") or "") + "\n"
+                else:
+                    conversation.append(m)
+            if not conversation or conversation[-1].get("role") != "user":
+                # Gemini requires the last message to be from the user
+                conversation.append({"role": "user", "content": "..."})
+            try:
+                reply = await gemini_chat(
+                    system_prompt=system_prompt.strip() or "You are Albert, a British AI sales rep.",
+                    messages=conversation,
+                )
+                print(f"[LLM] Gemini reply for {phone or 'unknown'} ({len(reply)} chars)")
+                return reply
+            except Exception as e:
+                print(f"[LLM] Gemini failed, falling back to OpenRouter: {e}")
+
         model = model or settings.OPENROUTER_PRIMARY_MODEL
         client = self._get_client(lead_id, conversation_state, phone, company)
         

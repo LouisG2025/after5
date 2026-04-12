@@ -1,12 +1,15 @@
 import asyncio
-import time
-import sys
 import os
+import sys
 from unittest.mock import AsyncMock
+
+import pytest
 
 # Add project root to path
 sys.path.append(os.getcwd())
 
+
+@pytest.mark.asyncio
 async def test_buffering():
     print("\n--- Testing Buffering Logic ---")
     

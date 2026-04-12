@@ -1,0 +1,319 @@
+/**
+ * After5 Baileys Bridge
+ * =====================
+ * Connects WhatsApp (via QR pairing) to the Python FastAPI backend.
+ *
+ * Inbound flow:
+ *   WhatsApp → Baileys socket → POST http://localhost:8000/baileys/incoming
+ *
+ * Outbound flow:
+ *   Python → POST http://localhost:3001/send → Baileys socket → WhatsApp
+ *
+ * Run:
+ *   cd baileys && npm install && npm start
+ *
+ * First run: a QR code will be printed in the terminal.
+ * Scan it from your phone:
+ *   WhatsApp → Settings → Linked Devices → Link a Device → scan QR
+ *
+ * The session is cached in ./auth_info_baileys/ so you only scan once.
+ */
+
+import pkg from "@whiskeysockets/baileys";
+const {
+  makeWASocket,
+  useMultiFileAuthState,
+  DisconnectReason,
+  fetchLatestBaileysVersion,
+} = pkg;
+import pino from "pino";
+import qrcode from "qrcode-terminal";
+import express from "express";
+import axios from "axios";
+
+// ---------- Config -----------------------------------------------
+const PORT = Number(process.env.BAILEYS_PORT || 3001);
+const PYTHON_BACKEND_URL =
+  process.env.PYTHON_BACKEND_URL || "http://127.0.0.1:8000";
+const PYTHON_WEBHOOK_PATH = "/baileys/incoming";
+const AUTH_FOLDER = "./auth_info_baileys";
+
+const logger = pino({
+  level: process.env.LOG_LEVEL || "info",
+  transport: {
+    target: "pino/file",
+    options: { destination: 1 }, // stdout
+  },
+});
+
+// ---------- Baileys socket ---------------------------------------
+let sock = null;
+
+// Map: phoneDigits → original JID (e.g. "72666702676122" → "72666702676122@lid")
+// We store this on every inbound message so outbound replies go back to the
+// same JID, including for anonymised @lid chats where there's no real phone.
+const jidByPhone = new Map();
+
+async function startBaileys() {
+  const { state, saveCreds } = await useMultiFileAuthState(AUTH_FOLDER);
+  const { version } = await fetchLatestBaileysVersion();
+
+  logger.info(`Using Baileys v${version.join(".")}`);
+
+  sock = makeWASocket({
+    version,
+    auth: state,
+    printQRInTerminal: false, // we handle QR ourselves for a cleaner UX
+    logger: pino({ level: "silent" }),
+    browser: ["After5 Albert", "Chrome", "1.0.0"],
+    markOnlineOnConnect: false,
+    syncFullHistory: false,
+  });
+
+  sock.ev.on("creds.update", saveCreds);
+
+  sock.ev.on("connection.update", (update) => {
+    const { connection, lastDisconnect, qr } = update;
+
+    if (qr) {
+      console.log("\n╔════════════════════════════════════════════╗");
+      console.log("║  Scan this QR with WhatsApp to pair        ║");
+      console.log("║  WhatsApp → Settings → Linked Devices →    ║");
+      console.log("║  Link a Device → scan below                ║");
+      console.log("╚════════════════════════════════════════════╝\n");
+      qrcode.generate(qr, { small: true });
+    }
+
+    if (connection === "open") {
+      const phone = sock.user?.id?.split(":")[0] || "unknown";
+      console.log("\n✅  Connected to WhatsApp");
+      console.log(`    Linked number: +${phone}`);
+      console.log(`    Bridge URL:    http://localhost:${PORT}`);
+      console.log(`    Python URL:    ${PYTHON_BACKEND_URL}\n`);
+    }
+
+    if (connection === "close") {
+      const statusCode = lastDisconnect?.error?.output?.statusCode;
+      const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
+      logger.warn(
+        `Connection closed. Status: ${statusCode}. Reconnect: ${shouldReconnect}`
+      );
+      if (shouldReconnect) {
+        setTimeout(() => startBaileys(), 2000);
+      } else {
+        console.log(
+          "\n⚠️   Logged out from WhatsApp. Delete ./auth_info_baileys and restart to re-pair.\n"
+        );
+        process.exit(0);
+      }
+    }
+  });
+
+  // ---------- Presence (typing) → Python backend ----------------
+  // Subscribes to typing indicators from leads and forwards to the backend so
+  // the interrupt handler in baileys_client.py can pause Albert mid-response.
+  sock.ev.on("presence.update", async (update) => {
+    const jid = update?.id;
+    if (!jid || jid.endsWith("@g.us") || jid === "status@broadcast") return;
+
+    // Pick the most specific presence state reported
+    const presences = update.presences || {};
+    const presenceForJid = presences[jid] || Object.values(presences)[0];
+    if (!presenceForJid) return;
+
+    const state = presenceForJid.lastKnownPresence; // 'composing' | 'paused' | 'available' | 'unavailable'
+    const phoneDigits = jid.split("@")[0];
+
+    try {
+      await axios.post(
+        `${PYTHON_BACKEND_URL}/baileys/presence`,
+        { phone: phoneDigits, state: state || "available" },
+        { timeout: 3000 }
+      );
+      logger.debug(`[presence] ${phoneDigits} → ${state}`);
+    } catch (err) {
+      logger.debug(`[presence] forward failed: ${err.message}`);
+    }
+  });
+
+  // ---------- Inbound messages → Python backend -----------------
+  sock.ev.on("messages.upsert", async ({ messages, type }) => {
+    if (type !== "notify") return;
+
+    for (const msg of messages) {
+      if (!msg.message) continue;
+      if (msg.key.fromMe) continue; // ignore own messages
+      if (msg.key.remoteJid === "status@broadcast") continue;
+      if (msg.key.remoteJid?.endsWith("@g.us")) continue; // ignore groups
+
+      // Resolve the REAL phone number.
+      // WhatsApp now sends messages from strangers as anonymised @lid JIDs
+      // (e.g. "72666702676122@lid"). The real phone number, when available,
+      // can be in various fields depending on the Baileys version.
+      const remoteJid = msg.key.remoteJid;
+      let phoneJid = remoteJid;
+
+      if (remoteJid?.endsWith("@lid")) {
+        // Try every known field that might contain the real phone JID
+        const candidates = [
+          msg.key.senderPn,
+          msg.key.senderLid,
+          msg.key.participantPn,
+          msg.key.participant,
+          msg.verifiedBizName,
+        ].filter(Boolean);
+
+        const realJid = candidates.find(
+          (c) => typeof c === "string" && c.endsWith("@s.whatsapp.net")
+        );
+
+        if (realJid) {
+          phoneJid = realJid;
+          logger.info(`[LID→PN] ${remoteJid} resolved to ${phoneJid}`);
+        } else {
+          // Dump the full key so we can see what's actually available
+          logger.info(
+            `[LID unresolved] ${remoteJid} → keys: ${JSON.stringify(
+              Object.keys(msg.key)
+            )} | full: ${JSON.stringify(msg.key)}`
+          );
+        }
+      }
+
+      const phoneDigits = phoneJid.split("@")[0];
+      const messageText =
+        msg.message.conversation ||
+        msg.message.extendedTextMessage?.text ||
+        msg.message.imageMessage?.caption ||
+        "";
+      const senderName = msg.pushName || "";
+      const messageId = msg.key.id;
+      const timestamp = Number(msg.messageTimestamp) || Math.floor(Date.now() / 1000);
+
+      if (!messageText) {
+        logger.debug(`Ignoring non-text message from ${phoneDigits}`);
+        continue;
+      }
+
+      logger.info(
+        `[IN] ${phoneDigits} (${senderName}): ${messageText.slice(0, 200)}`
+      );
+
+      // Subscribe to this lead's presence updates so we can detect typing
+      // (Baileys requires an explicit presenceSubscribe per contact)
+      try {
+        await sock.presenceSubscribe(remoteJid);
+      } catch (err) {
+        logger.debug(`presenceSubscribe failed for ${phoneDigits}: ${err.message}`);
+      }
+
+      // Remember the original JID for this phone so we can reply to the same
+      // JID later (important for @lid messages where the JID is not a real
+      // phone number but an anonymised WhatsApp LID).
+      jidByPhone.set(phoneDigits, remoteJid);
+
+      // Forward to Python backend in Baileys-native format
+      try {
+        await axios.post(
+          `${PYTHON_BACKEND_URL}${PYTHON_WEBHOOK_PATH}`,
+          {
+            phone: phoneDigits,
+            name: senderName,
+            text: messageText,
+            message_id: messageId,
+            timestamp,
+          },
+          { timeout: 5000 }
+        );
+      } catch (err) {
+        logger.error(
+          `Failed to forward to Python: ${err.message} - is the backend running at ${PYTHON_BACKEND_URL}?`
+        );
+      }
+    }
+  });
+}
+
+// ---------- HTTP API for Python backend to call -----------------
+const app = express();
+app.use(express.json());
+
+app.get("/health", (_req, res) => {
+  res.json({
+    status: "ok",
+    connected: !!sock?.user,
+    phone: sock?.user?.id?.split(":")[0] || null,
+  });
+});
+
+/** POST /send  — Python sends a text message out via WhatsApp */
+app.post("/send", async (req, res) => {
+  const { phone, text } = req.body || {};
+  if (!phone || !text) {
+    return res.status(400).json({ error: "phone and text are required" });
+  }
+  if (!sock?.user) {
+    return res.status(503).json({ error: "WhatsApp not connected" });
+  }
+  try {
+    const jid = toJid(phone);
+    await sock.sendMessage(jid, { text });
+    logger.info(`[OUT] ${phone}: ${String(text).slice(0, 200)}`);
+    res.json({ status: "sent" });
+  } catch (err) {
+    logger.error(`Send failed: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/** POST /typing  — Python shows/hides typing indicator */
+app.post("/typing", async (req, res) => {
+  const { phone, state = "composing" } = req.body || {};
+  if (!phone) return res.status(400).json({ error: "phone required" });
+  if (!sock?.user) return res.status(503).json({ error: "not connected" });
+  try {
+    const jid = toJid(phone);
+    await sock.sendPresenceUpdate(state, jid);
+    res.json({ status: "ok" });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/** POST /read  — Python marks incoming message as read (blue ticks) */
+app.post("/read", async (req, res) => {
+  const { phone, message_id } = req.body || {};
+  if (!phone || !message_id) {
+    return res.status(400).json({ error: "phone and message_id required" });
+  }
+  if (!sock?.user) return res.status(503).json({ error: "not connected" });
+  try {
+    const jid = toJid(phone);
+    await sock.readMessages([{ remoteJid: jid, id: message_id, participant: undefined }]);
+    res.json({ status: "read" });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ---------- Helpers ---------------------------------------------
+function toJid(phone) {
+  // Accepts "whatsapp:+447700900000", "447700900000", "+447700900000"
+  // If we have the original JID stored (from an inbound message), prefer that —
+  // critical for @lid chats where the digits don't form a real phone JID.
+  const digits = String(phone).replace("whatsapp:", "").replace("+", "");
+  const stored = jidByPhone.get(digits);
+  if (stored) return stored;
+  return `${digits}@s.whatsapp.net`;
+}
+
+// ---------- Start -----------------------------------------------
+app.listen(PORT, () => {
+  console.log(`\n🚀 Baileys bridge HTTP API on http://localhost:${PORT}`);
+  console.log("   Endpoints: GET /health, POST /send, POST /typing, POST /read\n");
+});
+
+startBaileys().catch((err) => {
+  logger.error(`Fatal: ${err.message}`);
+  process.exit(1);
+});

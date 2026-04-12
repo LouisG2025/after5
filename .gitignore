@@ -1,6 +1,7 @@
 __pycache__/
 *.pyc
 .env
+.env.example
 .venv/
 venv/
 *.egg-info/
@@ -9,3 +10,6 @@ build/
 .idea/
 .vscode/
 *.log
+dump.rdb
+node_modules/
+baileys/auth_info_baileys/

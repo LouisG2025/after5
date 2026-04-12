@@ -1,0 +1,18 @@
+{
+  "name": "after5-baileys-bridge",
+  "version": "1.0.0",
+  "description": "Baileys WhatsApp bridge for After5 Albert AI sales agent",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node --watch index.js"
+  },
+  "dependencies": {
+    "@whiskeysockets/baileys": "6.7.9",
+    "axios": "^1.7.7",
+    "express": "^4.21.1",
+    "pino": "^9.5.0",
+    "qrcode-terminal": "^0.12.0"
+  }
+}

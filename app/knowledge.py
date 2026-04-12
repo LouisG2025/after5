@@ -18,6 +18,9 @@ async def get_query_embedding(text: str) -> List[float]:
 
 async def retrieve_knowledge(query: str, threshold: float = 0.4, limit: int = 3) -> str:
     """Searches the knowledge base and returns concatenated context."""
+    # Skip entirely if OpenAI isn't configured (local dev without embeddings)
+    if not settings.OPENAI_API_KEY or settings.OPENAI_API_KEY.startswith("dummy"):
+        return ""
     try:
         # 1. Generate embedding for the user's query
         query_vec = await get_query_embedding(query)

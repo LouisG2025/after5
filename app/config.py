@@ -16,13 +16,26 @@ class Settings(BaseSettings):
     WHATSAPP_ACCESS_TOKEN: str = os.getenv("WHATSAPP_ACCESS_TOKEN", "")
     WHATSAPP_VERIFY_TOKEN: str = os.getenv("WHATSAPP_VERIFY_TOKEN", "after5_verify_token")
     WHATSAPP_API_VERSION: str = os.getenv("WHATSAPP_API_VERSION", "v21.0")
-    MESSAGING_PROVIDER: str = os.getenv("MESSAGING_PROVIDER", "whatsapp_cloud") # "messagebird" or "whatsapp_cloud"
+    MESSAGING_PROVIDER: str = os.getenv("MESSAGING_PROVIDER", "baileys")  # "baileys" | "whatsapp_cloud" | "messagebird"
+
+    # Baileys (local Node service for QR-paired WhatsApp)
+    BAILEYS_SERVICE_URL: str = os.getenv("BAILEYS_SERVICE_URL", "http://localhost:3001")
+    # Comma-separated allowlist of phone numbers. When set, Albert only replies
+    # to numbers in this list (safety for testing on a personal WhatsApp).
+    # Numbers can be with or without '+', country code, or spaces — we strip to digits.
+    # Leave empty to allow everyone (production behaviour).
+    BAILEYS_ALLOWED_PHONES: str = os.getenv("BAILEYS_ALLOWED_PHONES", "")
 
     # OpenRouter
     OPENROUTER_API_KEY: str = os.getenv("OPENROUTER_API_KEY", "")
     OPENROUTER_PRIMARY_MODEL: str = "anthropic/claude-sonnet-4-5"
     OPENROUTER_FALLBACK_MODEL: str = "openai/gpt-4o"
     OPENROUTER_BANT_MODEL: str = "openai/gpt-4o-mini"
+
+    # Google Gemini (free tier primary)
+    GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
+    GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
+    LLM_PROVIDER: str = os.getenv("LLM_PROVIDER", "openrouter")  # "gemini" | "openrouter"
 
     # Redis
     REDIS_URL: str
@@ -40,9 +53,9 @@ class Settings(BaseSettings):
 
     # App
     DEBUG: bool = False
-    # Input buffer settings (V4: 5 second silence window)
+    # Input buffer settings (Brief spec: 5s silence window, 25s hard max)
     INPUT_BUFFER_SECONDS: float = 5.0
-    INPUT_BUFFER_MAX_SECONDS: float = 8.0
+    INPUT_BUFFER_MAX_SECONDS: float = 25.0
     MAX_INTERRUPT_RETRIES: int = 2
 
     # Low content spam threshold (Master Prompt Fix 4)
