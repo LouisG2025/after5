@@ -6,3 +6,9 @@ OUTREACH_TEMPLATES = [
 ]
 
 FOLLOW_UP_TEMPLATE = "Hey {name}, just following up from yesterday. No stress if the timing's off, just didn't want you to miss the message. Maybe if we would need this or not, lmk"
+
+RETURNING_LEAD_TEMPLATES = [
+    "Hey {name}, Albert here again from After5. Saw your name come through again for {company_name}, good to have you back. What's changed since last time?",
+    "Hey {name}, Albert from After5 again. Just saw another request come through for {company_name}, welcome back. Was there something new you wanted to chat about?",
+    "Hey {name}, Albert here from After5, we spoke before. Just saw your demo request come through again for {company_name}, what's on your mind this time round?",
+]

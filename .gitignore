@@ -1,7 +1,8 @@
 __pycache__/
 *.pyc
 .env
-.env.example
+.env.local
+frontend/.env.local
 .venv/
 venv/
 *.egg-info/

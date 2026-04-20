@@ -55,7 +55,7 @@ async def process_conversation(phone: str, message: str, conversation_id: str = 
                 if idle_seconds > 86400:  # 24 hours
                     logger.info("[Conversation] %s returning after 24h idle — reopening session.", phone)
                     lead_name = session.get("lead_data", {}).get("first_name", "there")
-                    returning_template = f"Hey {lead_name}, Albert here again from After5. Glad you came back — what changed?"
+                    returning_template = f"Hey {lead_name}, Albert here again from After5. Good to have you back, what's changed since we last spoke"
                     # Send template as single message
                     await send_message(phone, returning_template)
                     # Re-initialise session
@@ -464,11 +464,11 @@ async def build_enhanced_context(session: dict, lead_data: dict, message: str, k
 
     rag_training = await redis_client.get(rag_key) or ""
 
-    # Qualification signaling
+    # Qualification signaling (new scoring: lead_gen, pain, intent, engagement)
     bant_scores = session.get("bant_scores", {})
     overall_score = bant_scores.get("overall_score", 0)
     recommended_action = bant_scores.get("recommended_action", "continue_discovery")
-    
+
     # 1. Detect Buyer Signals and Personality
     interest = detect_interest_level(message)
     user_history = [m["content"] for m in session.get("history", []) if m["role"] == "user"]
@@ -496,10 +496,15 @@ async def build_enhanced_context(session: dict, lead_data: dict, message: str, k
     if form_details:
         instruction += f"\nFORM DATA SUBMITTED BY LEAD:\n" + "\n".join(form_details) + "\nThis is ONLY background context for you. Do NOT assume anything from this data. Do NOT reference their industry, lead volume, problems, or terminology unless THEY mention it first in the conversation. The industry field tells you their general space, nothing else. Never say things like 'property enquiries', 'discovery calls', 'viewings', 'qualifying leads', or any industry-specific term unless the lead used that term first. Always ask what they do and what they need. NEVER skip discovery questions based on form data. If you catch yourself about to reference something from form data that the lead hasn't said, STOP and ask a genuine question instead.\n"
 
+    # Inject returning lead context if present
+    returning_context = session.get("previous_context", "")
+
     # Append everything to the system message
     if messages and messages[0]["role"] == "system":
+        if returning_context:
+            messages[0]["content"] += f"\n\n═══ {returning_context} ═══\n"
         if rag_training:
             messages[0]["content"] += f"\n\n--- SALES TRAINING MODULE ---\n{rag_training}\n"
         messages[0]["content"] += instruction
-        
+
     return messages
