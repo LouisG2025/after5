@@ -133,16 +133,35 @@ async def send_outbound(lead: LeadCreate, background_tasks: BackgroundTasks = No
 
 @router.post("/form-webhook")
 async def form_webhook(payload: dict):
-    """Endpoint for n8n/website form submissions."""
+    """Endpoint for n8n/website form submissions.
+
+    Every submission wipes prior lead/session state so a returning lead
+    starts from a clean opener — same behavior as the dashboard Reset.
+    """
+    # Lazy import: app.debug imports from this module, so a top-level
+    # import would be circular.
+    from app.debug import _wipe_redis, _wipe_supabase
+
     name = payload.get("first_name") or payload.get("name")
     phone = payload.get("phone")
     company = payload.get("company", "your business")
-    
+
     if not name or not phone:
         return {"error": "name and phone required"}
-        
+
+    normalized = normalize_phone(phone)
+    redis_deleted = await _wipe_redis(normalized)
+    supabase_result = await _wipe_supabase(normalized)
+    logger.info(
+        "[Form Webhook] 🧹 Reset %s before fresh outreach — redis keys: %d, supabase: %s",
+        normalized, redis_deleted, supabase_result,
+    )
+
     asyncio.create_task(send_initial_outreach(name, phone, company, payload))
-    return {"status": "outreach_scheduled"}
+    return {
+        "status": "outreach_scheduled",
+        "reset": bool(supabase_result.get("deleted_lead_id")),
+    }
 
 async def send_follow_up_message(lead_id: str, name: str, phone: str):
     """Sends the 24-hour follow-up message."""
