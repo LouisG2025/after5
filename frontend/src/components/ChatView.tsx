@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { Lead, Message, ConversationState } from "@/lib/types";
 import { formatTime, initials, phaseColor } from "@/lib/format";
+import ResetModal from "./ResetModal";
 
 type Booking = {
   id: string;
@@ -70,6 +71,7 @@ export default function ChatView({ leadId }: Props) {
   const { lead, messages, state, booking } = data;
   const name = `${lead.first_name || ""} ${lead.last_name || ""}`.trim() || "Unknown";
   const phase = state?.current_state ?? "Opening";
+  const [resetOpen, setResetOpen] = useState(false);
 
   return (
     <div className="flex h-full min-w-0 flex-1">
@@ -86,11 +88,29 @@ export default function ChatView({ leadId }: Props) {
               </div>
             </div>
           </div>
-          <div className={`flex items-center gap-2 rounded-full px-3 py-1 text-xs font-medium text-white ${phaseColor(phase)}`}>
-            <span className="h-2 w-2 rounded-full bg-white/80" />
-            {phase}
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setResetOpen(true)}
+              className="rounded border border-zinc-700 bg-zinc-900 px-2.5 py-1 text-[11px] font-medium text-zinc-300 hover:border-red-700 hover:bg-red-950 hover:text-red-300"
+              title="Wipe state + re-fire opening template"
+            >
+              Reset
+            </button>
+            <div className={`flex items-center gap-2 rounded-full px-3 py-1 text-xs font-medium text-white ${phaseColor(phase)}`}>
+              <span className="h-2 w-2 rounded-full bg-white/80" />
+              {phase}
+            </div>
           </div>
         </div>
+
+        <ResetModal
+          open={resetOpen}
+          onClose={() => setResetOpen(false)}
+          defaultPhone={lead.phone ?? ""}
+          defaultFirstName={lead.first_name || "Test"}
+          defaultCompany={lead.company || "your business"}
+          defaultMessage={lead.form_message || ""}
+        />
 
         <div
           className="scroll-thin flex-1 overflow-y-auto bg-[#0b141a] px-6 py-4"

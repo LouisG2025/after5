@@ -7,6 +7,7 @@ from app.outbound import router as outbound_router
 from app.calendly import router as calendly_router
 from app.training_api import router as training_router
 from app.test_chat import router as test_chat_router
+from app.debug import router as debug_router
 from app.config import settings
 
 # Configure logging to stdout
@@ -42,6 +43,7 @@ app.include_router(outbound_router)
 app.include_router(calendly_router)
 app.include_router(training_router)
 app.include_router(test_chat_router)
+app.include_router(debug_router)
 
 @app.get("/")
 async def health():
