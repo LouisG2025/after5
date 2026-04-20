@@ -23,6 +23,7 @@ type Props = { leadId: string };
 export default function ChatView({ leadId }: Props) {
   const [data, setData] = useState<Payload | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [resetOpen, setResetOpen] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const prevCount = useRef(0);
 
@@ -71,7 +72,6 @@ export default function ChatView({ leadId }: Props) {
   const { lead, messages, state, booking } = data;
   const name = `${lead.first_name || ""} ${lead.last_name || ""}`.trim() || "Unknown";
   const phase = state?.current_state ?? "Opening";
-  const [resetOpen, setResetOpen] = useState(false);
 
   return (
     <div className="flex h-full min-w-0 flex-1">

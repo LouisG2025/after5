@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import ConversationList from "@/components/ConversationList";
 import ChatView from "@/components/ChatView";
 import ResetModal from "@/components/ResetModal";
@@ -8,6 +8,13 @@ import ResetModal from "@/components/ResetModal";
 export default function Home() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [resetOpen, setResetOpen] = useState(false);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const initial = params.get("lead");
+    if (initial) setSelectedId(initial);
+    if (params.get("reset") === "1") setResetOpen(true);
+  }, []);
 
   return (
     <div className="flex h-full">
