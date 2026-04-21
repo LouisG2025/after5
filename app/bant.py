@@ -60,14 +60,19 @@ async def extract_bant(phone: str, history: List[Dict[str, str]]):
         await redis_client.save_session(phone, session)
         
         # ── Update Tracker ─────────────────
-        # Map new scoring categories to existing BANT DB columns
         await tracker.update_state(
             lead_id=lead_id,
             current_state=session["state"],
-            bant_budget=bant_data.get("lead_gen", {}).get("evidence"),
-            bant_authority=bant_data.get("engagement", {}).get("evidence"),
-            bant_need=bant_data.get("pain", {}).get("evidence"),
-            bant_timeline=bant_data.get("intent", {}).get("evidence")
+            signal_lead_gen=bant_data.get("lead_gen", {}).get("evidence"),
+            signal_pain=bant_data.get("pain", {}).get("evidence"),
+            signal_intent=bant_data.get("intent", {}).get("evidence"),
+            signal_engagement=bant_data.get("engagement", {}).get("evidence"),
+            score_lead_gen=bant_data.get("lead_gen", {}).get("score"),
+            score_pain=bant_data.get("pain", {}).get("score"),
+            score_intent=bant_data.get("intent", {}).get("score"),
+            score_engagement=bant_data.get("engagement", {}).get("score"),
+            buying_signals=bant_data.get("buying_signals") or [],
+            recommended_action=bant_data.get("recommended_action"),
         )
         
         await tracker.update_signal_score(lead_id, bant_data.get("overall_score", 0))

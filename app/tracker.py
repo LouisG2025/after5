@@ -169,10 +169,16 @@ class AlbertTracker:
         self,
         lead_id: str,
         current_state: str,
-        bant_budget: Optional[str] = None,
-        bant_authority: Optional[str] = None,
-        bant_need: Optional[str] = None,
-        bant_timeline: Optional[str] = None,
+        signal_lead_gen: Optional[str] = None,
+        signal_pain: Optional[str] = None,
+        signal_intent: Optional[str] = None,
+        signal_engagement: Optional[str] = None,
+        score_lead_gen: Optional[int] = None,
+        score_pain: Optional[int] = None,
+        score_intent: Optional[int] = None,
+        score_engagement: Optional[int] = None,
+        buying_signals: Optional[list] = None,
+        recommended_action: Optional[str] = None,
     ) -> None:
         if not lead_id or lead_id == "unknown":
             return
@@ -184,15 +190,26 @@ class AlbertTracker:
                 "last_active_at": now,
                 "updated_at": now,
             }
-            # Only include BANT fields that were explicitly passed
-            if bant_budget is not None:
-                payload["bant_budget"] = bant_budget
-            if bant_authority is not None:
-                payload["bant_authority"] = bant_authority
-            if bant_need is not None:
-                payload["bant_need"] = bant_need
-            if bant_timeline is not None:
-                payload["bant_timeline"] = bant_timeline
+            if signal_lead_gen is not None:
+                payload["signal_lead_gen"] = signal_lead_gen
+            if signal_pain is not None:
+                payload["signal_pain"] = signal_pain
+            if signal_intent is not None:
+                payload["signal_intent"] = signal_intent
+            if signal_engagement is not None:
+                payload["signal_engagement"] = signal_engagement
+            if score_lead_gen is not None:
+                payload["score_lead_gen"] = score_lead_gen
+            if score_pain is not None:
+                payload["score_pain"] = score_pain
+            if score_intent is not None:
+                payload["score_intent"] = score_intent
+            if score_engagement is not None:
+                payload["score_engagement"] = score_engagement
+            if buying_signals is not None:
+                payload["buying_signals"] = buying_signals
+            if recommended_action is not None:
+                payload["recommended_action"] = recommended_action
 
             client = await supabase_client.get_client()
             await client.table("conversation_state").upsert(payload, on_conflict="lead_id").execute()

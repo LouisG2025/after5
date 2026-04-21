@@ -160,12 +160,25 @@ export default function ChatView({ leadId }: Props) {
           <Field label="Messages" value={String(state?.message_count ?? messages.length)} />
         </Section>
 
-        <Section title="BANT">
-          <Field label="Budget" value={state?.bant_budget ?? "—"} />
-          <Field label="Authority" value={state?.bant_authority ?? "—"} />
-          <Field label="Need" value={state?.bant_need ?? "—"} />
-          <Field label="Timeline" value={state?.bant_timeline ?? "—"} />
+        <Section title="Signals">
+          <SignalRow label="Lead gen" score={state?.score_lead_gen ?? null} evidence={state?.signal_lead_gen ?? null} />
+          <SignalRow label="Pain" score={state?.score_pain ?? null} evidence={state?.signal_pain ?? null} />
+          <SignalRow label="Intent" score={state?.score_intent ?? null} evidence={state?.signal_intent ?? null} />
+          <SignalRow label="Engagement" score={state?.score_engagement ?? null} evidence={state?.signal_engagement ?? null} />
+          <Field label="Action" value={formatAction(state?.recommended_action)} />
         </Section>
+
+        {state?.buying_signals && state.buying_signals.length > 0 && (
+          <Section title="Buying signals">
+            <ul className="space-y-1">
+              {state.buying_signals.map((s, i) => (
+                <li key={i} className="rounded-md bg-zinc-900 px-2.5 py-1.5 text-xs text-zinc-300">
+                  {s}
+                </li>
+              ))}
+            </ul>
+          </Section>
+        )}
 
         {booking && (
           <Section title="Booking">
@@ -212,6 +225,45 @@ function Field({ label, value }: { label: string; value: string }) {
     <div className="flex items-baseline justify-between gap-2 text-xs">
       <span className="text-zinc-500">{label}</span>
       <span className="truncate text-right text-zinc-200">{value}</span>
+    </div>
+  );
+}
+
+function formatAction(action: string | null | undefined): string {
+  if (!action) return "—";
+  return action
+    .split("_")
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(" ");
+}
+
+function SignalRow({
+  label,
+  score,
+  evidence,
+}: {
+  label: string;
+  score: number | null;
+  evidence: string | null;
+}) {
+  const scoreText = score === null || score === undefined ? "—" : `${score}/10`;
+  const scoreColor =
+    score === null
+      ? "text-zinc-500"
+      : score >= 8
+      ? "text-emerald-400"
+      : score >= 5
+      ? "text-amber-400"
+      : "text-zinc-400";
+  return (
+    <div className="space-y-0.5">
+      <div className="flex items-baseline justify-between gap-2 text-xs">
+        <span className="text-zinc-500">{label}</span>
+        <span className={`font-medium tabular-nums ${scoreColor}`}>{scoreText}</span>
+      </div>
+      {evidence && (
+        <div className="text-[11px] leading-snug text-zinc-400">{evidence}</div>
+      )}
     </div>
   );
 }
