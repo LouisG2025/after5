@@ -4,6 +4,7 @@ from fastapi import APIRouter, Request
 from app.redis_client import redis_client
 from app.supabase_client import supabase_client
 from app.messaging import send_chunked_messages
+from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +46,7 @@ def normalize_phone(raw: str) -> str:
     return f"whatsapp:+{phone}"
 
 
-def extract_phone_from_payload(payload: dict) -> str | None:
+def extract_phone_from_payload(payload: dict) -> Optional[str]:
     """
     Extract the WhatsApp phone number from the Calendly payload.
 

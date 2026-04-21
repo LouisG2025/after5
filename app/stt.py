@@ -2,13 +2,14 @@ import logging
 import io
 import httpx
 from app.config import settings
+from typing import Optional
 
 logger = logging.getLogger(__name__)
 
 WHISPER_URL = "https://api.openai.com/v1/audio/transcriptions"
 
 
-async def process_voice_note_from_media_id(media_id: str) -> str | None:
+async def process_voice_note_from_media_id(media_id: str) -> Optional[str]:
     """
     Full pipeline for WhatsApp Cloud API voice notes:
     1. Get media URL from media_id

@@ -4,6 +4,7 @@ import random
 import httpx
 from app.config import settings
 from app.chunker import calculate_typing_delay
+from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +23,7 @@ def _to_wa_phone(phone: str) -> str:
     return phone.replace("whatsapp:", "").replace("+", "")
 
 
-async def send_message(to: str, body: str) -> dict | None:
+async def send_message(to: str, body: str) -> Optional[dict]:
     """Send a text message via WhatsApp Cloud API."""
     payload = {
         "messaging_product": "whatsapp",
@@ -100,7 +101,7 @@ async def send_chunked_messages(
         await send_message(to, formatted_chunk)
 
 
-async def send_template_message(to: str, template_name: str, language_code: str = "en", components: list = None) -> dict | None:
+async def send_template_message(to: str, template_name: str, language_code: str = "en", components: list = None) -> Optional[dict]:
     """Send a WhatsApp template message."""
     payload = {
         "messaging_product": "whatsapp",

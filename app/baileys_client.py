@@ -12,6 +12,7 @@ import logging
 import httpx
 
 from app.config import settings
+from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -21,10 +22,23 @@ def _normalize_phone(phone: str) -> str:
     return phone.replace("whatsapp:", "").replace("+", "")
 
 
-async def send_message(to: str, body: str) -> dict | None:
+async def _resolve_to_lid(phone_digits: str) -> str:
+    """Check if this real phone has a LID mapping and use that instead."""
+    from app.redis_client import redis_client
+    lid = await redis_client.redis.get(f"phone_to_lid:{phone_digits}")
+    if lid:
+        resolved = lid.decode('utf-8') if isinstance(lid, bytes) else lid
+        logger.info(f"[Baileys] Routing {phone_digits} via LID {resolved}")
+        return resolved
+    return phone_digits
+
+
+async def send_message(to: str, body: str) -> Optional[dict]:
     """Send a plain text message via the Baileys bridge."""
     url = f"{settings.BAILEYS_SERVICE_URL}/send"
-    payload = {"phone": _normalize_phone(to), "text": body}
+    digits = _normalize_phone(to)
+    resolved = await _resolve_to_lid(digits)
+    payload = {"phone": resolved, "text": body}
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             resp = await client.post(url, json=payload)
@@ -41,7 +55,9 @@ async def send_message(to: str, body: str) -> dict | None:
 async def send_typing_indicator(to: str, message_id: str = "") -> bool:
     """Show 'typing…' presence to the lead."""
     url = f"{settings.BAILEYS_SERVICE_URL}/typing"
-    payload = {"phone": _normalize_phone(to), "state": "composing"}
+    digits = _normalize_phone(to)
+    resolved = await _resolve_to_lid(digits)
+    payload = {"phone": resolved, "state": "composing"}
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
             resp = await client.post(url, json=payload)

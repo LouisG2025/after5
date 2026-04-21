@@ -53,13 +53,26 @@ class BaileysPresence(BaseModel):
     state: str           # "composing" | "paused" | "available" | "unavailable"
 
 
+@router.post("/baileys/map-phone")
+async def baileys_map_phone(data: dict):
+    """Map a WhatsApp LID to a real phone number."""
+    lid = data.get("lid", "")
+    real = data.get("real_phone", "")
+    if lid and real:
+        await redis_client.redis.set(f"lid_map:{lid}", real, ex=86400 * 30)
+        logger.info(f"[Baileys] Mapped LID {lid} → {real}")
+        return {"status": "mapped"}
+    return {"status": "ignored"}
+
+
 @router.post("/baileys/presence")
 async def baileys_presence(p: BaileysPresence):
     """
     Called by the Baileys Node service when the lead's typing state changes.
     Updates Redis so the interrupt logic in send_chunked_messages can react.
     """
-    phone = f"whatsapp:+{p.phone}"
+    resolved = await redis_client.redis.get(f"lid_map:{p.phone}")
+    phone = f"whatsapp:+{resolved.decode('utf-8') if isinstance(resolved, bytes) else resolved}" if resolved else f"whatsapp:+{p.phone}"
     state = (p.state or "").lower()
     if state == "composing":
         await redis_client.set_lead_typing(phone)
@@ -78,12 +91,22 @@ async def baileys_incoming(msg: BaileysIncoming, background_tasks: BackgroundTas
     if not msg.text or not msg.text.strip():
         return {"status": "ignored", "reason": "empty"}
 
-    # Allowlist check — only reply to phones on BAILEYS_ALLOWED_PHONES when set
-    if not _is_phone_allowed(msg.phone):
-        logger.info(f"[Baileys] Ignored {msg.phone} — not on allowlist")
+    # Resolve LID → real phone via Redis mapping BEFORE allowlist check
+    resolved = await redis_client.redis.get(f"lid_map:{msg.phone}")
+    if resolved:
+        real_phone = resolved.decode('utf-8') if isinstance(resolved, bytes) else resolved
+        logger.info(f"[Baileys] LID {msg.phone} resolved to {real_phone}")
+        # Store reverse mapping so outbound messages route back through LID
+        await redis_client.redis.set(f"phone_to_lid:{real_phone}", msg.phone, ex=86400 * 30)
+    else:
+        real_phone = msg.phone
+
+    # Allowlist check — using resolved real phone number
+    if not _is_phone_allowed(real_phone):
+        logger.info(f"[Baileys] Ignored {real_phone} — not on allowlist")
         return {"status": "ignored", "reason": "not_on_allowlist"}
 
-    sender_phone = f"whatsapp:+{msg.phone}"
+    sender_phone = f"whatsapp:+{real_phone}"
     message_id = msg.message_id or f"baileys-{int(time.time() * 1000)}"
     message_ts = msg.timestamp or int(time.time())
 

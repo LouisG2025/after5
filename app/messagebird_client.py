@@ -4,6 +4,7 @@ import asyncio
 import httpx
 from app.config import settings
 from app.chunker import calculate_typing_delay
+from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +52,7 @@ def _workspace_channel_url(path: str = "") -> str:
     )
 
 
-async def send_message(to: str, body: str) -> dict | None:
+async def send_message(to: str, body: str) -> Optional[dict]:
     """
     Send a WhatsApp message via Bird Channels API.
     """
@@ -130,7 +131,7 @@ async def send_typing_indicator(to: str, conversation_id: str = "") -> bool:
     return True
 
 
-async def reply_to_conversation(conversation_id: str, body: str) -> dict | None:
+async def reply_to_conversation(conversation_id: str, body: str) -> Optional[dict]:
     """Placeholder for API compatibility."""
     return None
 
@@ -158,7 +159,7 @@ async def reply_chunked_messages(conversation_id: str, chunks: list[str]) -> Non
     pass
 
 
-async def get_contact_phone(contact_id: str) -> str | None:
+async def get_contact_phone(contact_id: str) -> Optional[str]:
     """
     Fetch sender phone number from Bird Contacts API.
     """

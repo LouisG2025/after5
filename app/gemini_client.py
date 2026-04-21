@@ -17,7 +17,7 @@ Usage:
     )
 """
 import logging
-from typing import List, Dict
+from typing import List, Dict, Optional
 
 import google.generativeai as genai
 
@@ -56,7 +56,7 @@ def _to_gemini_history(messages: List[Dict[str, str]]) -> List[Dict]:
 async def gemini_chat(
     system_prompt: str,
     messages: List[Dict[str, str]],
-    model: str | None = None,
+    model: Optional[str] = None,
     temperature: float = 0.8,
     max_output_tokens: int = 500,
 ) -> str:

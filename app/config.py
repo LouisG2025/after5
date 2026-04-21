@@ -1,3 +1,4 @@
+from typing import Optional
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from functools import lru_cache
 import os
@@ -46,7 +47,7 @@ class Settings(BaseSettings):
     SUPABASE_SERVICE_KEY: str
 
     # Helicone (optional)
-    HELICONE_API_KEY: str | None = None
+    HELICONE_API_KEY: Optional[str] = None
 
     # Calendly
     CALENDLY_LINK: str = "https://calendly.com/after5/free-discovery-call"

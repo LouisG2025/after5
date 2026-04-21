@@ -12,6 +12,7 @@ from app.config import settings
 from app import baileys_client as baileys
 from app import messagebird_client as bird
 from app import whatsapp_client as cloud
+from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +21,7 @@ def _provider() -> str:
     return (settings.MESSAGING_PROVIDER or "baileys").lower()
 
 
-async def send_message(to: str, body: str) -> dict | None:
+async def send_message(to: str, body: str) -> Optional[dict]:
     """Send a message using the configured provider."""
     provider = _provider()
     if provider == "baileys":
@@ -73,7 +74,7 @@ async def send_typing_indicator(
     return await bird.send_typing_indicator(to, conversation_id)
 
 
-async def get_contact_phone(contact_id: str) -> str | None:
+async def get_contact_phone(contact_id: str) -> Optional[str]:
     """Contact phone lookup (legacy Bird feature)."""
     if _provider() == "messagebird":
         return await bird.get_contact_phone(contact_id)

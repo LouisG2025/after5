@@ -32,7 +32,9 @@ async def process_conversation(phone: str, message: str, conversation_id: str = 
         if not session:
             lead = await tracker.get_lead_by_phone(phone)
             if not lead:
-                lead = await tracker.create_lead(phone=phone)
+                raw_name = await redis_client.redis.get(f"last_name:{phone}")
+                sender_name = raw_name.decode('utf-8') if isinstance(raw_name, bytes) else (raw_name or "")
+                lead = await tracker.create_lead(phone=phone, first_name=sender_name)
             session = {
                 "state": ConversationState.OPENING,
                 "history": [],
@@ -74,6 +76,18 @@ async def process_conversation(phone: str, message: str, conversation_id: str = 
 
         lead_data = session.get("lead_data", {})
         lead_id = lead_data.get("id")
+
+        # Ensure lead_id is resolved (fixes race condition with background tracker)
+        if not lead_id:
+            lead = await tracker.get_lead_by_phone(phone)
+            if not lead:
+                # Get sender name from Redis (stored by webhook on inbound)
+                raw_name = await redis_client.redis.get(f"last_name:{phone}")
+                sender_name = raw_name.decode('utf-8') if isinstance(raw_name, bytes) else (raw_name or "")
+                lead = await tracker.create_lead(phone=phone, first_name=sender_name)
+            if lead:
+                lead_id = lead.get("id")
+                session["lead_data"] = lead
 
         # Handle Simulation Data collection if #reset was called
         if session.get("sim_collecting"):
