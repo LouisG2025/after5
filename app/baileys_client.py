@@ -98,29 +98,30 @@ async def mark_as_read(message_id: str) -> None:
 
 
 async def mark_batch_as_read(phone: str, message_ids: list[str]) -> None:
-    """Blue-tick a burst of messages from the same lead in one batch.
-    When a lead sends 3 messages quickly, we want all 3 to flip to read at
-    once when the silence timer fires — not one at a time, and not just the
-    last one.
+    """Blue-tick a burst of messages all at once — exactly how real WhatsApp
+    behaves when you open a chat with unread messages.
+
+    Sends ALL message_ids in a single HTTP call, which Baileys passes to
+    sock.readMessages in one batch. WhatsApp then sends batched read
+    receipts to the sender's client, so all bubbles flip blue together
+    rather than ticking one at a time.
     """
-    if not message_ids:
+    ids = [m for m in (message_ids or []) if m]
+    if not ids:
         return
     digits = _normalize_phone(phone)
     resolved = await _resolve_to_lid(digits)
     url = f"{settings.BAILEYS_SERVICE_URL}/read"
+    payload = {"phone": resolved, "message_ids": ids}
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
-            # Fire all reads in parallel so the ticks flip together
-            await asyncio.gather(
-                *[
-                    client.post(url, json={"phone": resolved, "message_id": mid})
-                    for mid in message_ids
-                    if mid
-                ],
-                return_exceptions=True,
-            )
+            resp = await client.post(url, json=payload)
+            if resp.status_code != 200:
+                logger.error(f"[Baileys] Batch read failed {resp.status_code}: {resp.text}")
+            else:
+                logger.info(f"[Baileys] Marked {len(ids)} msg(s) read in one batch for {phone}")
     except Exception as e:
-        logger.debug(f"[Baileys] Batch mark-as-read error: {e}")
+        logger.debug(f"[Baileys] Mark-as-read error: {e}")
 
 
 async def _clear_typing(to: str) -> None:
@@ -163,25 +164,57 @@ async def _poll_interruptible(
     return "continue"
 
 
-async def _handle_pause(to: str, max_wait: float = 20.0) -> str:
+async def _compute_pause_budget(to: str) -> float:
+    """How long to wait for the lead to finish typing, scaled to context.
+    A real person's wait isn't fixed — they wait longer if the conversation
+    has been substantive, shorter if it's been a quick back-and-forth.
+
+    - Last lead message ≤ 30 chars  → 6s   (snappy chat, don't stall)
+    - 30 < length ≤ 120 chars       → 10s  (normal)
+    - 120 < length ≤ 250 chars      → 13s
+    - > 250 chars                   → 15s  (cap — was 20s, too long)
+
+    No prior message info available → 8s default.
     """
-    Lead started typing while Albert was mid-response.
-    1) Drop the typing indicator immediately.
-    2) Wait up to max_wait seconds for them to send or stop.
-    3) Return action:
-        "reprocess" → a new message arrived, restart
-        "resume"    → they stopped typing or timed out, carry on
-    Per brief: "Pause if lead types mid-response. Wait 20s.
-                If they send, restart. If not, continue."
+    from app.redis_client import redis_client
+    try:
+        last = await redis_client.redis.get(f"last_lead_msg:{to}")
+        if not last:
+            return 8.0
+        length = len(last.decode('utf-8') if isinstance(last, bytes) else last)
+    except Exception:
+        return 8.0
+
+    if length <= 30:
+        return 6.0
+    if length <= 120:
+        return 10.0
+    if length <= 250:
+        return 13.0
+    return 15.0
+
+
+async def _handle_pause(to: str, max_wait: float | None = None) -> str:
+    """Lead started typing while Albert was mid-response. Drop the typing
+    indicator and wait up to max_wait seconds for them to send or stop.
+    If max_wait is None (default), it's computed dynamically from the lead's
+    last message length so we don't stall on quick chats or cut off long ones.
+
+    Returns:
+        "reprocess" → new message arrived, restart from scratch
+        "resume"    → they went silent or timed out, carry on
     """
     from app.redis_client import redis_client
 
+    if max_wait is None:
+        max_wait = await _compute_pause_budget(to)
+
     await _clear_typing(to)
-    logger.info(f"[Baileys] Paused for {to} — lead is typing, waiting up to {max_wait}s")
+    logger.info(f"[Baileys] Paused for {to} — lead is typing, waiting up to {max_wait:.1f}s")
 
     waited = 0.0
     step = 0.5
-    silence_threshold = 5.0  # resume if they go quiet for 5s
+    silence_threshold = 4.0  # resume if they go quiet for 4s (was 5s — felt long)
 
     while waited < max_wait:
         await asyncio.sleep(step)

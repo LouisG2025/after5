@@ -26,6 +26,11 @@ class Settings(BaseSettings):
     # Numbers can be with or without '+', country code, or spaces — we strip to digits.
     # Leave empty to allow everyone (production behaviour).
     BAILEYS_ALLOWED_PHONES: str = os.getenv("BAILEYS_ALLOWED_PHONES", "")
+    # Comma-separated allowlist of WhatsApp display names (pushName). Used as a
+    # fallback when WhatsApp sends the message via an anonymised @lid that
+    # can't be resolved to a real phone. Case-insensitive, partial match
+    # against the inbound name. Empty = no name-based check.
+    BAILEYS_ALLOWED_NAMES: str = os.getenv("BAILEYS_ALLOWED_NAMES", "")
 
     # OpenRouter
     OPENROUTER_API_KEY: str = os.getenv("OPENROUTER_API_KEY", "")

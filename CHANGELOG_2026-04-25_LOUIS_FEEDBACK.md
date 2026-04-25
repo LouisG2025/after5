@@ -1,7 +1,12 @@
 # Albert — Changelog for Louis's 25 Apr 2026 Feedback
 
-This document covers everything fixed in response to Louis's WhatsApp feedback.
+This document covers everything fixed in response to Louis's WhatsApp feedback,
+plus the additional polishing rounds we did during live testing the same day.
 Skim this before testing — it tells you what to look for.
+
+> **Latest update:** the second wave (sections 9-19 below) was added during
+> live test sessions on 2026-04-25 and addresses real bugs caught while
+> testing on real WhatsApp from Shashank's number.
 
 ---
 
@@ -77,6 +82,138 @@ New prompt section: short msg → short reply, long thoughtful msg → slightly 
 
 ---
 
+---
+
+## Live-testing polishing round (added later same day)
+
+### 9. Allowlist with name fallback (`BAILEYS_ALLOWED_NAMES`)
+WhatsApp now anonymises personal accounts behind opaque `@lid` IDs (15-digit
+strings, not real phone numbers). A strict phone-only allowlist would block
+legitimate testers because the LID can't always be resolved to the real phone.
+
+**Fix:** added a second env var `BAILEYS_ALLOWED_NAMES` that matches the
+WhatsApp pushName (case-insensitive substring). The allowlist gate now passes
+if EITHER the resolved phone OR the pushName matches. Set in `.env` to
+`shashank,louis` for testing. For production, leave both empty.
+
+### 10. Typing-indicator before blue-tick (FIXED order)
+Before, `conversation.py` step 5 fired a typing indicator BEFORE the LLM call,
+which meant Albert showed "typing…" before the lead's message had even been
+blue-ticked. Looked like a bot that knew what to say before reading anything.
+
+**Fix:** removed the early typing indicator. The full sequence is now run
+inside `send_chunked_messages`: blue-tick → reading delay → think → typing →
+review → send. Real-human order.
+
+### 11. Dynamic typing-pause budget (was hard-coded 20s)
+When the lead types back during Albert's reply, Albert pauses HIS typing
+indicator and waits. The old fixed 20s wait was too long for snappy chats and
+not always right for long thoughtful messages.
+
+**Fix:** `_compute_pause_budget` now scales the wait dynamically by the lead's
+last message length:
+- ≤30 chars → 6s
+- 30-120 chars → 10s
+- 120-250 chars → 13s
+- 250+ chars → 15s
+
+Stored in Redis as `last_lead_msg:{phone}`.
+
+### 12. Batch blue-tick — atomic via Baileys array
+Before, marking 3 incoming messages as read fired 3 parallel HTTP POSTs to
+the Baileys node. Each POST called `sock.readMessages` separately, leading to
+staggered tick rendering on the sender's WhatsApp.
+
+**Fix:** `mark_batch_as_read` now sends ALL message_ids in a single HTTP POST
+with `{"message_ids": [...]}`. The Baileys node's `/read` endpoint accepts the
+array and passes all IDs to `sock.readMessages` in one atomic call. All ticks
+flip blue together — exactly how real WhatsApp behaves.
+
+### 13. Interrupt-path msg_id merge
+When the lead sends new messages WHILE Albert is generating a reply, the
+old interrupt-recursion in `conversation.py` step 9 silently dropped the new
+message_ids. Only the original message would turn blue when the final reply
+landed.
+
+**Fix:** the interrupt-recursion now pulls fresh `pending_msg_ids` from Redis,
+merges them with the existing burst, and threads the merged list through the
+recursive `process_conversation` call. Every message in the burst flips blue.
+
+### 14. Snappy blue-tick (mid-reply glance)
+If the lead sends a message while Albert is mid-reply (typing or sending),
+the message used to stay grey for 10-20s while the next reply cycle ran.
+
+**Fix:** when the webhook detects a new message AND `is_generating=true`, it
+schedules a quick "glance" task that fires after ~1.5s and blue-ticks the new
+message. Mimics a real human who finishes their current text, glances at the
+new incoming (instant blue tick), THEN takes time to compose the next reply.
+Plus a second snappy-tick added in `conversation.py` step 9 right before the
+LLM recursion fires.
+
+### 15. Inbound logging via `asyncio.create_task` (was queued behind buffer tasks)
+FastAPI's `BackgroundTasks` runs sequentially after the response. The inbound
+tracker log was queued AFTER `_delayed_buffer_process` (sleeps 2s + LLM call ~5s
++ chunked send 10-15s). So the user's message wouldn't appear in the dashboard
+until ~20s after they sent it, and if anything went sideways during that window
+(server reload, exception), the inbound log was lost entirely.
+
+**Fix:** inbound logging now fires via `asyncio.create_task` so it runs
+concurrently with the buffer tasks. Dashboard shows the user's message within
+~1s of arrival.
+
+### 16. `is_typing` column graceful handling
+`tracker.set_typing_status` was 400-erroring on every message because the
+`is_typing` column doesn't exist in the `conversation_state` table.
+
+**Fix:** the tracker now caches the missing-column state on first error and
+silently no-ops thereafter. Logs a one-time hint to add a migration. Optional
+proper fix: `ALTER TABLE conversation_state ADD COLUMN is_typing BOOLEAN DEFAULT FALSE;`
+
+### 17. Strict voice enforcement (cheeky human, not corporate bot)
+The earlier prompt described casual British tone but didn't enforce it. The
+LLM would drift toward neutral/corporate voice, especially under emotional or
+complex moments.
+
+**Fix:** added a new prompt section "STRICT VOICE ENFORCEMENT — NOT OPTIONAL"
+with five rules:
+- **Rule A:** every reply MUST open with one of an exact list (yeah, so, right,
+  alright, the thing is, honestly, actually, wait, depends really, nah, hm,
+  fair, nice one, gotcha, makes sense, haha, hey, hey mate, ah, oh).
+- **Rule A.1:** NEVER stack two openers ("yeah hey", "so hey", "alright yeah"
+  are all banned with explicit BAD/GOOD examples).
+- **Rule B:** every reply must contain at least one casual British word (mate,
+  look, haha, fair, proper, sound, real one, etc.).
+- **Rule C:** banned corporate openers/phrases (Sure!, Of course!, Great
+  question, I'd be happy to, Thanks for reaching out, emojis, dashes, colons).
+- **Rule D:** at least 1 in 3 replies must include a moment of personality
+  (light tease, self-aware aside, reaction beat, pattern interrupt, market
+  self-disclosure).
+- **Rule E:** reactions without an agenda are valid ("hm, fair enough" + nothing
+  is a complete reply when the moment calls for it).
+
+Plus a self-check the LLM runs before output: opener ✓, natural word ✓, no
+banned phrases ✓, personality quota ✓.
+
+### 18. Multi-message handling in prompt
+When the lead sends 2-3 messages back-to-back, the buffer combines them into
+one input. The earlier prompt didn't tell Albert how to prioritise. He was
+ignoring substantive content (e.g. a lead-gen pain statement) in favour of
+just answering the last message ("plz?").
+
+**Fix:** added "HANDLING MULTIPLE MESSAGES IN ONE TURN" section to the prompt
+with priority order — substantive message wins, emotional plea gets
+warmth-first acknowledgement, direct questions get answered, combined as one
+natural reply. With a worked WRONG/RIGHT example using the actual case Louis
+flagged.
+
+### 19. Match-their-pace section
+Added an explicit "MATCH THEIR PACE" section so reply LENGTH scales with
+incoming length: one-word lead reply gets a one-bubble Albert reply, long
+thoughtful gets slightly more developed, vibe reply ("haha", emoji) gets a
+casual reaction back.
+
+---
+
 ## What was NOT changed (and why)
 
 - **Baileys → Neonize migration**: Louis suggested it as optional ("if you don't need that then it is fine"). Baileys works; migration mid-launch adds risk for marginal gain. Parked until post-launch.
@@ -105,12 +242,15 @@ New prompt section: short msg → short reply, long thoughtful msg → slightly 
 | File | What changed |
 |---|---|
 | `app/chunker.py` | Stop splitting on `\n\n`. Continuation merge guardrail. Content-aware human-pace timings. |
-| `app/baileys_client.py` | Send retry + return delivered list. Batch read marking. Timing logs. `import time` fix. |
-| `app/webhook.py` | RPUSH all message IDs (was overwriting). Pull list before processing. |
-| `app/conversation.py` | Use delivered-chunks list for history + Supabase logging instead of full LLM response. |
-| `app/messaging.py` | Provider abstraction returns the delivered list. |
+| `app/baileys_client.py` | Send retry + return delivered list. Batch read marking via array. Timing logs. `import time` fix. Dynamic typing-pause budget. |
+| `app/webhook.py` | RPUSH all message IDs. Pull list before processing. Snappy mid-reply blue-tick. Inbound logging via `asyncio.create_task` (concurrent). Allowlist with name fallback. Track `last_lead_msg`. |
+| `app/conversation.py` | Use delivered-chunks list for history + Supabase logging. Removed early typing indicator. Interrupt-path merges fresh msg_ids + fires snappy glance. |
+| `app/messaging.py` | Provider abstraction returns the delivered list. Threads `pending_message_ids`. |
 | `app/outbound.py` | All 3 outbound paths only log what actually delivered. |
-| `prompts/system_prompt.txt` | Chunking-vs-formatting rewrite. Phase 2 trimmed. Phase 4 optional. New Memory/Callbacks/Subtext/Warmth + Match Pace sections. |
+| `app/tracker.py` | `set_typing_status` gracefully handles missing `is_typing` column. |
+| `app/config.py` | New `BAILEYS_ALLOWED_NAMES` env var for pushName-based allowlist fallback. |
+| `baileys/index.js` | `/read` endpoint accepts both single `message_id` and `message_ids` array. |
+| `prompts/system_prompt.txt` | Chunking-vs-formatting rewrite. Phase 2 trimmed. Phase 4 optional. Memory/Callbacks/Subtext/Warmth + Match Pace sections. STRICT VOICE ENFORCEMENT (Rules A, A.1, B, C, D, E). Multi-message handling. Greeter openers + no-stacking rule. |
 | `tests/test_chunking_logic.py` | Updated typing-delay assertion to new realistic range. |
 
-All 32 existing tests pass.
+All 32 existing tests pass after every change.

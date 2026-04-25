@@ -26,25 +26,49 @@ class BaileysIncoming(BaseModel):
 
 
 def _is_phone_allowed(phone_digits: str) -> bool:
-    """
-    Check if a phone number is on the BAILEYS_ALLOWED_PHONES allowlist.
-    When the list is empty/unset, everyone is allowed (production behaviour).
-    Comparison strips non-digits from both sides so various formats work.
-    """
+    """Phone-only allowlist check. Empty list → allow everyone."""
     raw = (settings.BAILEYS_ALLOWED_PHONES or "").strip()
     if not raw:
-        return True  # no allowlist configured → allow everyone
+        return True
 
     import re as _re
     incoming = _re.sub(r"\D", "", phone_digits or "")
     allowed = {_re.sub(r"\D", "", p) for p in raw.split(",") if p.strip()}
-    # Exact match or suffix match (handles cases where one has country code, the other doesn't)
     if incoming in allowed:
         return True
     for a in allowed:
         if a and (incoming.endswith(a) or a.endswith(incoming)):
             return True
     return False
+
+
+def _is_name_allowed(name: str) -> bool:
+    """Name-based fallback for WhatsApp accounts that arrive via @lid and
+    can't be resolved to a real phone number. Case-insensitive substring
+    match — 'shashank' allows 'shashank', 'Shashank Sharma', 'shashank j'.
+    Empty allowlist returns False (won't accidentally allow everyone here)."""
+    raw = (settings.BAILEYS_ALLOWED_NAMES or "").strip()
+    if not raw or not name:
+        return False
+    n = name.strip().lower()
+    return any(token.strip().lower() in n for token in raw.split(",") if token.strip())
+
+
+def _is_lead_allowed(phone_digits: str, name: str) -> bool:
+    """Combined allowlist gate. Passes if EITHER:
+      1. BAILEYS_ALLOWED_PHONES is empty (open-door production mode), OR
+      2. The resolved phone matches BAILEYS_ALLOWED_PHONES, OR
+      3. WhatsApp pushName matches BAILEYS_ALLOWED_NAMES — the fallback for
+         @lid messages that can't be resolved to a real phone.
+    The name fallback only kicks in when phones are configured (i.e. you're
+    in lockdown mode) — otherwise step 1 short-circuits."""
+    raw_phones = (settings.BAILEYS_ALLOWED_PHONES or "").strip()
+    if not raw_phones:
+        return True  # phone list empty → allow everyone (production)
+
+    if _is_phone_allowed(phone_digits):
+        return True
+    return _is_name_allowed(name)
 
 
 class BaileysPresence(BaseModel):
@@ -101,9 +125,12 @@ async def baileys_incoming(msg: BaileysIncoming, background_tasks: BackgroundTas
     else:
         real_phone = msg.phone
 
-    # Allowlist check — using resolved real phone number
-    if not _is_phone_allowed(real_phone):
-        logger.info(f"[Baileys] Ignored {real_phone} — not on allowlist")
+    # Allowlist check — phone OR pushName must match (name covers @lid
+    # accounts that can't be resolved to a real phone number).
+    if not _is_lead_allowed(real_phone, msg.name):
+        logger.info(
+            f"[Baileys] Ignored phone={real_phone} name='{msg.name}' — not on allowlist"
+        )
         return {"status": "ignored", "reason": "not_on_allowlist"}
 
     sender_phone = f"whatsapp:+{real_phone}"
@@ -162,11 +189,27 @@ async def baileys_incoming(msg: BaileysIncoming, background_tasks: BackgroundTas
     await redis_client.redis.rpush(f"pending_msg_ids:{sender_phone}", message_id)
     await redis_client.redis.expire(f"pending_msg_ids:{sender_phone}", 300)
     await redis_client.redis.set(f"last_name:{sender_phone}", msg.name, ex=300)
+    # Track last lead message text so the typing-pause budget can scale with
+    # how substantive their messages have been
+    await redis_client.redis.set(f"last_lead_msg:{sender_phone}", msg.text[:500], ex=600)
+
+    # SNAPPY GLANCE: if Albert is currently generating/sending another reply,
+    # fire a fast blue-tick after a short pause. Mimics a real human who
+    # finishes their current message, glances at the incoming new one
+    # (instant blue tick), THEN takes time to compose the next reply.
+    # Without this, the new message stays grey for 10-20s while the next
+    # process cycle runs.
+    if await redis_client.is_generating(sender_phone):
+        background_tasks.add_task(_snappy_blue_tick, sender_phone, message_id)
 
     background_tasks.add_task(_delayed_buffer_process, sender_phone, batch_id, message_ts)
     if not await redis_client.redis.get(f"buffer_first:{sender_phone}"):
         background_tasks.add_task(_hard_max_check, sender_phone, message_ts)
-    background_tasks.add_task(_background_tracker_log, sender_phone, msg.name, msg.text)
+    # Inbound logging fires CONCURRENTLY (asyncio.create_task) instead of
+    # being queued in BackgroundTasks. The latter runs sequentially after
+    # the buffer tasks (20+ seconds), so dashboard wouldn't show the user's
+    # message until then — and if uvicorn reloaded mid-flow, it'd never log.
+    asyncio.create_task(_background_tracker_log(sender_phone, msg.name, msg.text))
 
     return {"status": "ok"}
 
@@ -340,6 +383,14 @@ async def webhook(request: Request, background_tasks: BackgroundTasks):
         await redis_client.redis.rpush(f"pending_msg_ids:{sender_phone}", message_id)
         await redis_client.redis.expire(f"pending_msg_ids:{sender_phone}", 300)
         await redis_client.redis.set(f"last_name:{sender_phone}", sender_name, ex=300)
+        # Track last lead message text so the typing-pause budget can scale with
+        # how substantive their messages have been
+        await redis_client.redis.set(f"last_lead_msg:{sender_phone}", message_text[:500], ex=600)
+
+        # SNAPPY GLANCE — if Albert is mid-reply, blue-tick the new message
+        # within ~1.5s instead of making it wait through the next reply cycle.
+        if await redis_client.is_generating(sender_phone):
+            background_tasks.add_task(_snappy_blue_tick, sender_phone, message_id)
 
         # 5. Instant Blue Tick & Typing (REMOVED: Handled by advanced timing sequence)
         # background_tasks.add_task(mark_as_read, "", message_id)
@@ -357,14 +408,33 @@ async def webhook(request: Request, background_tasks: BackgroundTasks):
             # This shouldn't happen because buffer_message sets it, but for safety:
             background_tasks.add_task(_hard_max_check, sender_phone, message_ts)
         
-        # Tracker Log in background
-        background_tasks.add_task(_background_tracker_log, sender_phone, sender_name, message_text)
-        
+        # Tracker Log fires concurrently (not via BackgroundTasks) so it
+        # doesn't queue behind the buffer/process tasks. Otherwise inbound
+        # would only log after the full reply cycle finishes ~20s later.
+        asyncio.create_task(_background_tracker_log(sender_phone, sender_name, message_text))
+
         return {"status": "ok"}
         
     except Exception as e:
         logger.error(f"Webhook error: {e}", exc_info=True)
         return {"status": "error"}
+
+
+async def _snappy_blue_tick(phone: str, message_id: str):
+    """Quick blue-tick when a new message arrives while Albert is mid-reply.
+    Waits ~1.5s (so it doesn't feel instant) then marks the message read.
+    The full reply cycle still runs separately and re-marks via the normal
+    pending_msg_ids batch — these calls are idempotent so duplicate reads
+    are harmless.
+    """
+    try:
+        import asyncio as _asyncio
+        await _asyncio.sleep(1.5)
+        from app.baileys_client import mark_batch_as_read
+        await mark_batch_as_read(phone, [message_id])
+        logger.info(f"[Snappy glance] Blue-ticked {message_id} for {phone} mid-reply")
+    except Exception as e:
+        logger.debug(f"[Snappy glance] failed for {phone}: {e}")
 
 
 async def _background_tracker_log(phone: str, name: str, message: str):

@@ -216,10 +216,17 @@ class AlbertTracker:
         except Exception as e:
             print(f"[Albert Tracker Error] update_state: {e}")
 
+    # Cached check: skip DB calls once we know the is_typing column doesn't exist.
+    # Avoids spamming a 400 error on every message.
+    _is_typing_column_missing: bool = False
+
     async def set_typing_status(self, lead_id: str, is_typing: bool) -> None:
-        """Updates the is_typing field in conversation_state."""
+        """Updates the is_typing field in conversation_state. Silently skips
+        if the column doesn't exist in the schema (won't error-spam the logs)."""
         if not lead_id or lead_id == "unknown":
             return
+        if AlbertTracker._is_typing_column_missing:
+            return  # column doesn't exist, skip silently
         try:
             client = await supabase_client.get_client()
             await client.table("conversation_state").update({
@@ -227,7 +234,13 @@ class AlbertTracker:
                 "updated_at": datetime.now(timezone.utc).isoformat(),
             }).eq("lead_id", lead_id).execute()
         except Exception as e:
-            print(f"[Albert Tracker Error] set_typing_status: {e}")
+            err_str = str(e)
+            if "is_typing" in err_str and "column" in err_str.lower():
+                # Schema doesn't have the column. Cache that and stop trying.
+                AlbertTracker._is_typing_column_missing = True
+                print("[Albert Tracker] is_typing column missing in conversation_state — typing status updates disabled. Run migration to add it.")
+            else:
+                print(f"[Albert Tracker Error] set_typing_status: {e}")
 
     # ─── BOOKINGS ─────────────────────────────────────────────
 

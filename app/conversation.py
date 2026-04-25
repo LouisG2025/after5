@@ -181,10 +181,11 @@ async def process_conversation(phone: str, message: str, conversation_id: str = 
 
         # ... (Step 4 is moved up, so we'll just skip it below) ...
 
-        # Step 5: Start Typing Indicator (Simulates "Writing...")
-        # We start this BEFORE LLM call so the user knows we are responding
-        print(f"[Conversation] ✍️ Starting typing simulation for {phone}", flush=True)
-        await send_typing_indicator(phone, conversation_id, message_id)
+        # Step 5: DO NOT show typing indicator yet. The natural sequence is:
+        #   blue-tick (seen) → reading delay → think pause → typing → send
+        # send_chunked_messages handles all of that. Showing typing before
+        # the blue tick (the old behaviour) makes Albert look like a bot
+        # that already knew what to say before reading the message.
         if lead_id:
             await tracker.set_typing_status(lead_id, True)
 
@@ -233,8 +234,52 @@ async def process_conversation(phone: str, message: str, conversation_id: str = 
             logger.info("[Conversation] New messages arrived during processing for %s, re-generating", phone)
             combined = message + "\n" + new_messages_str
             await redis_client.clear_generating(phone)
-            # Re-process with combined input
-            return await process_conversation(phone, combined, conversation_id, message_id)
+
+            # CRITICAL: pull the freshly-arrived msg_ids from Redis and merge
+            # with the original burst so they ALL get blue-ticked when the
+            # final reply lands. Without this, the interrupt path silently
+            # drops the new IDs and only the original message turns blue.
+            new_pending_key = f"pending_msg_ids:{phone}"
+            new_raw = await redis_client.redis.lrange(new_pending_key, 0, -1)
+            new_ids = [
+                (m.decode('utf-8') if isinstance(m, bytes) else m) for m in new_raw
+            ]
+            if new_ids:
+                await redis_client.redis.delete(new_pending_key)
+            merged_pending = list(pending_message_ids or [])
+            for nid in new_ids:
+                if nid and nid not in merged_pending:
+                    merged_pending.append(nid)
+            # Use the newest message_id so blue-tick targets the latest bubble
+            latest_msg_id = merged_pending[-1] if merged_pending else message_id
+
+            # SNAPPY GLANCE: if any of the merged messages aren't read yet,
+            # blue-tick them NOW — before we burn another LLM cycle. This
+            # mimics a real human who finishes typing their reply, glances
+            # at the new incoming message (instant blue tick), THEN takes
+            # time to compose the next reply. Without this the new message
+            # would stay grey for 10-20s while the second reply generates.
+            if merged_pending:
+                from app.messaging import send_message as _sm  # noqa
+                from app.baileys_client import mark_batch_as_read
+                try:
+                    await mark_batch_as_read(phone, merged_pending)
+                    logger.info(
+                        "[Conversation] Snappy blue-tick fired for %d msg(s) before reprocess",
+                        len(merged_pending),
+                    )
+                except Exception as e:
+                    logger.debug(f"[Conversation] Snappy blue-tick failed: {e}")
+
+            # Re-process with combined input AND combined pending IDs
+            return await process_conversation(
+                phone,
+                combined,
+                conversation_id,
+                latest_msg_id,
+                last_message_ts=last_message_ts,
+                pending_message_ids=merged_pending,
+            )
 
         # Step 10: Calendly Resend Logic (Fix 3)
         response_text = await check_and_send_calendly(phone, response_text, session)

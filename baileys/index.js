@@ -280,18 +280,31 @@ app.post("/typing", async (req, res) => {
   }
 });
 
-/** POST /read  — Python marks incoming message as read (blue ticks) */
+/** POST /read  — Python marks one or many messages as read (blue ticks).
+ * Body: { phone, message_id }  OR  { phone, message_ids: [...] }
+ * Sending all IDs in one call lets Baileys flip them blue atomically,
+ * which matters for back-to-back message bursts (3 messages → 3 ticks
+ * at the same instant, not a staggered drip). */
 app.post("/read", async (req, res) => {
-  const { phone, message_id } = req.body || {};
-  if (!phone || !message_id) {
-    return res.status(400).json({ error: "phone and message_id required" });
+  const { phone, message_id, message_ids } = req.body || {};
+  if (!phone || (!message_id && !(message_ids && message_ids.length))) {
+    return res.status(400).json({ error: "phone and message_id(s) required" });
   }
   if (!sock?.user) return res.status(503).json({ error: "not connected" });
   try {
     const jid = toJid(phone);
-    await sock.readMessages([{ remoteJid: jid, id: message_id, participant: undefined }]);
-    res.json({ status: "read" });
+    const ids = (message_ids && message_ids.length) ? message_ids : [message_id];
+    // 1-on-1 chats (both @s.whatsapp.net and @lid) don't need participant.
+    // Pass all IDs to Baileys in a single readMessages call so they flip
+    // blue together rather than racing across multiple HTTP calls.
+    const readables = ids
+      .filter(Boolean)
+      .map((id) => ({ remoteJid: jid, id }));
+    await sock.readMessages(readables);
+    logger.info(`[OUT/read] ${phone}: marked ${readables.length} message(s) read`);
+    res.json({ status: "read", count: readables.length });
   } catch (err) {
+    logger.error(`Read failed: ${err.message}`);
     res.status(500).json({ error: err.message });
   }
 });
