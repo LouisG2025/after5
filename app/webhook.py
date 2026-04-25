@@ -158,6 +158,9 @@ async def baileys_incoming(msg: BaileysIncoming, background_tasks: BackgroundTas
     # 6. Buffer + schedule processing — identical flow to /webhook
     batch_id = await redis_client.buffer_message(sender_phone, msg.text)
     await redis_client.redis.set(f"last_msg_id:{sender_phone}", message_id, ex=300)
+    # Track every msg_id in the burst so we can blue-tick them all at once
+    await redis_client.redis.rpush(f"pending_msg_ids:{sender_phone}", message_id)
+    await redis_client.redis.expire(f"pending_msg_ids:{sender_phone}", 300)
     await redis_client.redis.set(f"last_name:{sender_phone}", msg.name, ex=300)
 
     background_tasks.add_task(_delayed_buffer_process, sender_phone, batch_id, message_ts)
@@ -333,6 +336,9 @@ async def webhook(request: Request, background_tasks: BackgroundTasks):
         batch_id = await redis_client.buffer_message(sender_phone, message_text)
         # Store last message_id and sender_name for processing
         await redis_client.redis.set(f"last_msg_id:{sender_phone}", message_id, ex=300)
+        # Track every msg_id in the burst so we can blue-tick them all at once
+        await redis_client.redis.rpush(f"pending_msg_ids:{sender_phone}", message_id)
+        await redis_client.redis.expire(f"pending_msg_ids:{sender_phone}", 300)
         await redis_client.redis.set(f"last_name:{sender_phone}", sender_name, ex=300)
 
         # 5. Instant Blue Tick & Typing (REMOVED: Handled by advanced timing sequence)
@@ -439,16 +445,26 @@ async def _process_with_interrupt_protection(
         # 2. Mark as read (Handled in advanced timing now)
         last_msg_id_val = await redis_client.redis.get(f"last_msg_id:{phone}")
         last_msg_id = last_msg_id_val.decode('utf-8') if isinstance(last_msg_id_val, bytes) else (last_msg_id_val or "")
-        
+
+        # Pull the full burst of pending msg_ids so we can batch-blue-tick them
+        pending_key = f"pending_msg_ids:{phone}"
+        raw_ids = await redis_client.redis.lrange(pending_key, 0, -1)
+        pending_ids = [
+            (m.decode('utf-8') if isinstance(m, bytes) else m) for m in raw_ids
+        ]
+        if pending_ids:
+            await redis_client.redis.delete(pending_key)
+
         # 3. Mark generation in progress
         await redis_client.set_generating(phone)
-        
+
         # 4. Process via conversation engine
         await process_conversation(
-            phone, 
-            combined_text, 
-            message_id=last_msg_id or "", 
-            last_message_ts=last_message_ts
+            phone,
+            combined_text,
+            message_id=last_msg_id or "",
+            last_message_ts=last_message_ts,
+            pending_message_ids=pending_ids,
         )
         
         # 5. Interrupt Check (Layer 3)

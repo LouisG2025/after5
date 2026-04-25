@@ -4,14 +4,63 @@ import time
 from app.config import settings
 
 
+_CONTINUATION_STARTERS = (
+    "so ", "and ", "but ", "or ", "which ", "where ", "because ",
+    "though ", "still ", "also ", "just ", "plus ", "anyway",
+)
+
+
+def _looks_like_continuation(chunk: str) -> bool:
+    """A chunk grammatically continues the prior message when it both:
+      1. opens with a connector word (so/and/but/which/etc), AND
+      2. is short (< 80 chars) and not a question.
+    Both conditions must hold — being lowercase alone isn't enough to override
+    an explicit ||| from the LLM. This catches the client's case
+    ('so your reps only deal with serious people') without over-merging
+    legitimate two-bubble replies.
+    """
+    if not chunk:
+        return False
+    if len(chunk) > 80:
+        return False
+    if chunk.rstrip().endswith("?"):
+        return False
+    low = chunk.lstrip().lower()
+    return low.startswith(_CONTINUATION_STARTERS)
+
+
+def _merge_continuations(chunks: list[str]) -> list[str]:
+    """Post-processor guardrail. If the LLM split a thought into two chunks
+    where the second chunk is a short trailing clause, fold it back into the
+    first with a blank line. This is the formatting-vs-chunking fix the client
+    asked for: 'so your reps only deal with people who are actually serious'
+    must stay in the same bubble as the preceding statement."""
+    if len(chunks) < 2:
+        return chunks
+    merged: list[str] = [chunks[0]]
+    for nxt in chunks[1:]:
+        # Never absorb a link into a prior bubble — links earn their own bubble
+        if re.search(r"https?://", nxt):
+            merged.append(nxt)
+            continue
+        if _looks_like_continuation(nxt):
+            merged[-1] = merged[-1].rstrip() + "\n\n" + nxt.lstrip()
+        else:
+            merged.append(nxt)
+    return merged
+
+
 def chunk_message(text: str, is_template: bool = False) -> list[str]:
     """
     Split LLM response into separate WhatsApp messages.
-    Priority: ||| markers → [CHUNK] legacy → smart splitting → single message.
+    Priority: ||| markers → [CHUNK] legacy → URL/PS pre-split → single message.
     HARD CAP: 3 chunks maximum.
 
+    Double newlines (\\n\\n) are formatting WITHIN a bubble, NOT chunk
+    boundaries. Splitting on them was the source of over-chunking — the LLM
+    uses paragraph breaks for readability inside one message.
+
     If is_template is True, bypass all chunking and return as-is.
-    Template messages (intro) should NEVER be chunked.
     """
     text = text.strip()
     if not text:
@@ -27,28 +76,25 @@ def chunk_message(text: str, is_template: bool = False) -> list[str]:
     elif "[CHUNK]" in text:
         chunks = [c.strip() for c in text.split("[CHUNK]") if c.strip()]
     else:
-        # Pre-process for links and "Ps"
-        # Split before URL
+        # Pre-process for links — links always earn their own bubble
         url_pattern = r'(https?://\S+)'
         urls = list(re.finditer(url_pattern, text))
         if urls:
-            # Only split if the URL isn't already the start of the message
             first_url = urls[0]
-            if first_url.start() > 5:  # Some buffer
+            if first_url.start() > 5:
                 text = text[:first_url.start()].strip() + "|||" + text[first_url.start():].strip()
                 return chunk_message(text)
-        # Split before "Ps" or "P.s." or "By the way"
+        # Split before "Ps" or "P.s." or "By the way" — these are afterthoughts
         ps_match = re.search(r'\s+(Ps|P\.s\.|By the way)\s+', text, re.IGNORECASE)
         if ps_match:
             text = text[:ps_match.start()].strip() + "|||" + text[ps_match.start():].strip()
             return chunk_message(text)
-        # 2. Smart split on double newlines
-        if "\n\n" in text:
-            chunks = [c.strip() for c in text.split("\n\n") if c.strip()]
-        else:
-            # 3. Fallback: Do not split. Trust the LLM decision.
-            # If the LLM didn't use ||| markers or double newlines, send as single message.
-            chunks = [text]
+        # No explicit chunk marker → ONE bubble. Paragraph breaks (\n\n) are
+        # formatting, not chunks. Trust the LLM's |||.
+        chunks = [text]
+
+    # Post-processor: merge short trailing continuations back into prior bubble
+    chunks = _merge_continuations(chunks)
 
     # Final cleanup and hard cap
     chunks = [c.strip() for c in chunks if c.strip()]
@@ -152,13 +198,18 @@ def format_message(text: str, is_template: bool = False, last_user_message: str 
     # Skipped if the lead directly asked whether we're AI.
     text = strip_ai_disclosure(text, user_asked=user_asked_about_ai(last_user_message))
 
-    # If LLM already included line breaks, preserve them and just clean up
+    # If LLM already included line breaks, preserve their intent.
+    # \n\n in the source = paragraph gap (keep as-is)
+    # single \n = soft break, keep as single (no escalation to double)
     if "\n" in text:
-        lines = [line.strip() for line in text.split("\n") if line.strip()]
-        # Drop full stop from last line
-        if lines and lines[-1].endswith("."):
-            lines[-1] = lines[-1][:-1]
-        return "\n\n".join(lines)
+        # Normalise: collapse 3+ newlines to exactly 2; keep singles as singles
+        import re as _re
+        normalised = _re.sub(r"\n{3,}", "\n\n", text)
+        # Drop trailing full stop on the last non-empty line
+        parts = normalised.rstrip().rsplit("\n", 1)
+        if parts[-1].endswith("."):
+            parts[-1] = parts[-1][:-1]
+        return "\n".join(parts) if len(parts) > 1 else parts[0]
 
     # Split into sentences for processing
     sentences = re.split(r'(?<=[.!?])\s+', text)
@@ -197,8 +248,11 @@ def format_message(text: str, is_template: bool = False, last_user_message: str 
     
     sentences = processed_sentences
 
-    # 2+ sentences/parts: group into short paragraphs with blank lines between
-    if len(sentences) >= 2:
+    # Only auto-paragraph if the message is genuinely long (3+ parts AND
+    # >180 chars). Short 1-2 sentence replies stay as a single block per
+    # prompt rule "Keep messages to 1 to 2 sentences for most replies."
+    total_len = sum(len(s) for s in sentences) + len(sentences)
+    if len(sentences) >= 3 and total_len > 180:
         paragraphs = []
         current_para = []
 
@@ -261,90 +315,94 @@ def aggregate_messages(buffer: list[str]) -> str:
 
 
 def calculate_blue_tick_delay(last_lead_message_time: float, current_time: float) -> float:
-    """
-    Calculate delay before marking message as read (blue tick).
-    - 2 seconds if actively chatting (last message < 60s ago)
-    - 5 seconds if returning after a gap
+    """Delay before marking the lead's message as read.
+    - ~2s if actively chatting (last message < 60s ago)
+    - ~4-5s if returning after a gap
 
-    IMPORTANT: When multiple messages arrive during aggregation,
-    blue tick ALL of them at once as a batch when this delay fires.
-    Do not blue tick them one at a time.
+    When multiple messages arrive during aggregation, blue-tick them all in
+    a single batch when this fires.
     """
     gap = current_time - last_lead_message_time
 
     if gap < 60:
-        # Active chat, quick blue tick
         return random.uniform(1.5, 2.5)
-    else:
-        # Returning after a gap
-        return random.uniform(4.5, 5.5)
+    return random.uniform(3.5, 5.0)
 
 
 def calculate_reading_delay(incoming_text: str) -> float:
+    """How long Albert 'reads' the incoming message before replying.
+    Tuned to feel like a real person on their phone — not instant, not lazy.
+    - One-word ack ('yes', 'ok'):     1.5-2.5s — they had to look at the screen
+    - Short msg (< 40 chars):          ~30ms/char, min 2.0s
+    - Normal msg:                       ~32ms/char, min 2.5s
+    - Long thoughtful msg (200+):       ~35ms/char, min 3.0s, capped at 8s
+    - Questions get a small ponder      +0.5s
+
+    The LLM call runs in parallel with this delay so generation overlaps;
+    this is purely the cosmetic "reading" time the lead perceives.
     """
-    Calculate how long Albert takes to read the incoming message.
-    - 0.04 seconds per character
-    - Minimum 4 seconds, maximum 15 seconds (per brief spec)
-
-    IMPORTANT: The LLM call should fire simultaneously with the
-    blue tick, meaning it runs in parallel during this reading delay.
-    By the time reading delay finishes, the LLM may already be done.
-    """
-    char_count = len(incoming_text)
-
-    reading_time = char_count * 0.04
-
-    return max(4.0, min(15.0, reading_time + random.uniform(-0.3, 0.3)))
-
-
-def calculate_typing_delay(text: str) -> float:
-    """
-    Calculate cosmetic typing duration for Albert's outgoing message.
-    - 0.1 seconds per character
-    - Minimum 1.5 seconds
-    - No maximum cap, duration scales with character count
-
-    This is the TARGET typing duration. How it interacts with LLM latency:
-
-    - If LLM finished before typing starts:
-      Typing runs for this full duration, then sends.
-
-    - If LLM is still generating when typing starts:
-      Typing indicator stays on while LLM finishes.
-      If LLM finishes BEFORE this duration would end:
-        typing continues until this duration completes, then sends.
-      If LLM finishes AFTER this duration would have ended:
-        sends immediately. No extra wait. LLM processing time
-        already exceeded what natural typing would have been.
-    """
+    text = (incoming_text or "").strip()
     char_count = len(text)
 
-    # 0.1s per character = 10 chars per second = 600 CPM
-    base_typing = char_count * 0.1
+    # Ultra-short ack — still takes a couple of seconds for a human to glance,
+    # process, and start replying. NOT instant.
+    if char_count <= 8:
+        return random.uniform(1.5, 2.5)
 
-    # Short message override (under 20 chars)
+    if char_count < 40:
+        rate = 0.030
+        floor = 2.0
+    elif char_count < 200:
+        rate = 0.032
+        floor = 2.5
+    else:
+        rate = 0.035
+        floor = 3.0
+
+    base = char_count * rate
+    if "?" in text:
+        base += 0.5  # ponder bonus when they ask something
+
+    return max(floor, min(8.0, base + random.uniform(-0.3, 0.3)))
+
+
+def calculate_typing_delay(text: str, is_first_chunk: bool = True) -> float:
+    """Cosmetic typing duration. Tuned to real phone-typing speed:
+    ~20 chars/sec is fast-but-human (most people are 15-25 cps on a phone).
+
+    - Very short reply (< 20 chars):  min 1.5s — even 'yeah cool' takes time
+                                      to thumb-type and hit send
+    - First chunk:                    min 2.0s, capped at 7s
+    - Follow-on chunk:                min 1.2s, capped at 3.5s
+                                      (faster than first because the thought
+                                      is already there, but not instant)
+    """
+    char_count = len(text)
+    base = char_count * 0.050  # ~20 chars/sec, realistic phone typing
+
     if char_count < 20:
-        return max(1.5, base_typing + random.uniform(0.3, 0.7))
+        floor = 1.5 if is_first_chunk else 1.0
+        cap = 2.5
+    elif is_first_chunk:
+        floor = 2.0
+        cap = 7.0
+    else:
+        floor = 1.2
+        cap = 3.5
 
-    return max(1.5, base_typing + random.uniform(-0.5, 0.5))
+    return max(floor, min(cap, base + random.uniform(-0.3, 0.3)))
 
 
 def calculate_think_pause() -> float:
-    """
-    Pause between finishing reading and starting to type.
-    Simulates Albert thinking about what to say.
-    Only applies to the first chunk. Not between subsequent chunks.
-    """
-    return random.uniform(0.8, 1.2)
+    """Pause between reading and typing — that beat where you decide what to
+    say before your thumbs move. First chunk only."""
+    return random.uniform(0.7, 1.2)
 
 
 def calculate_review_pause() -> float:
-    """
-    Pause between finishing typing and hitting send.
-    Simulates Albert reviewing his message before sending.
-    Only applies to the first chunk. Not between subsequent chunks.
-    """
-    return random.uniform(0.3, 0.7)
+    """Pause between typing and send — glancing at what you wrote before
+    hitting send. First chunk only."""
+    return random.uniform(0.3, 0.6)
 
 
 def calculate_full_sequence(incoming_text: str, outgoing_text: str, last_lead_message_time: float, current_time: float) -> dict:
@@ -398,17 +456,17 @@ def calculate_chunk_sequence(incoming_text: str, chunks: list[str], last_lead_me
         "blue_tick_delay": calculate_blue_tick_delay(last_lead_message_time, current_time),
         "reading_delay": calculate_reading_delay(incoming_text),
         "think_pause": calculate_think_pause(),
-        "typing_delay": calculate_typing_delay(chunks[0]),
+        "typing_delay": calculate_typing_delay(chunks[0], is_first_chunk=True),
         "review_pause": calculate_review_pause(),
     })
 
-    # Subsequent chunks: typing only, no other delays
+    # Subsequent chunks: typing only, capped lower so continuations land fast
     for chunk in chunks[1:]:
         sequences.append({
             "blue_tick_delay": 0,
             "reading_delay": 0,
             "think_pause": 0,
-            "typing_delay": calculate_typing_delay(chunk),
+            "typing_delay": calculate_typing_delay(chunk, is_first_chunk=False),
             "review_pause": 0,
         })
 

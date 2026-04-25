@@ -116,13 +116,15 @@ async def send_initial_outreach(name_raw: str, phone_raw: str, company_raw: str,
             
             # 5. Fallback: Human-like delivery — bypass chunking for template
             chunks = chunk_message(first_message_content, is_template=True)
-            
+
             # Note: typing indicator and delays are handled INSIDE send_chunked_messages.
-            # This is where the long delays (>30s) happen.
-            await send_chunked_messages(sender_phone, chunks, interruptible=False)
-            
-            # Log to Supabase
-            await tracker.log_outbound(lead_id, first_message_content)
+            delivered = await send_chunked_messages(sender_phone, chunks, interruptible=False)
+
+            # Only log to Supabase if mobile WhatsApp actually got it.
+            for chunk_text in (delivered or []):
+                await tracker.log_outbound(lead_id, chunk_text)
+            if not delivered:
+                logger.error("[Outreach] Initial outreach to %s did NOT deliver — skipping dashboard log to keep it in sync with mobile", sender_phone)
 
     except Exception as e:
         logger.error("[Outreach] 🚨 Failed to send initial outreach for %s: %s", phone_raw, e, exc_info=True)
@@ -232,9 +234,12 @@ async def send_returning_outreach(name_raw: str, phone: str, company_raw: str, f
 
         # 7. Send the welcome-back message
         chunks = chunk_message(welcome_msg, is_template=True)
-        await send_chunked_messages(phone, chunks, interruptible=False)
+        delivered = await send_chunked_messages(phone, chunks, interruptible=False)
         if lead_id:
-            await tracker.log_outbound(lead_id, welcome_msg)
+            for chunk_text in (delivered or []):
+                await tracker.log_outbound(lead_id, chunk_text)
+            if not delivered:
+                logger.error("[Returning Outreach] Welcome-back to %s did NOT deliver — skipping dashboard log", phone)
 
         logger.info("[Returning Outreach] ✅ Welcome-back sent to %s (%s)", name, phone)
 
@@ -255,10 +260,13 @@ async def send_follow_up_message(lead_id: str, name: str, phone: str):
         # 2. Human-like delivery — bypass chunking for follow-up template
         from app.chunker import chunk_message
         chunks = chunk_message(follow_up_content, is_template=True)
-        await send_chunked_messages(phone, chunks, interruptible=False)
-        
-        # 3. Log to Supabase
-        await tracker.log_outbound(lead_id, follow_up_content)
+        delivered = await send_chunked_messages(phone, chunks, interruptible=False)
+
+        # 3. Log to Supabase only what actually delivered to mobile WhatsApp
+        for chunk_text in (delivered or []):
+            await tracker.log_outbound(lead_id, chunk_text)
+        if not delivered:
+            logger.error("[Follow-up] Follow-up to %s did NOT deliver — skipping dashboard log", phone)
         
         # 4. Initialize or Update session state
         session = await redis_client.get_session(phone)

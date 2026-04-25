@@ -48,18 +48,29 @@ async def send_chunked_messages(
     incoming_text: str = "",
     last_message_ts: float = 0,
     message_id: str = "",
-) -> None:
-    """Send chunked messages using the configured provider."""
+    pending_message_ids: Optional[list[str]] = None,
+) -> list[str]:
+    """Send chunked messages and return the list of chunks that ACTUALLY
+    delivered. Callers must use the returned list (not the input chunks)
+    when logging to the dashboard so the dashboard stays in sync with
+    the mobile WhatsApp conversation.
+    """
     provider = _provider()
     if provider == "baileys":
-        return await baileys.send_chunked_messages(
-            to, chunks, incoming_text, last_message_ts, message_id
+        result = await baileys.send_chunked_messages(
+            to, chunks, incoming_text, last_message_ts, message_id,
+            pending_message_ids=pending_message_ids,
         )
+        return result if isinstance(result, list) else []
     if provider == "whatsapp_cloud":
-        return await cloud.send_chunked_messages(
+        result = await cloud.send_chunked_messages(
             to, chunks, incoming_text, last_message_ts, message_id
         )
-    return await bird.send_chunked_messages(to, chunks, incoming_text, last_message_ts)
+        # Cloud client may not yet return a list; fall back to assuming
+        # all chunks delivered when the call completed without raising.
+        return result if isinstance(result, list) else list(chunks)
+    result = await bird.send_chunked_messages(to, chunks, incoming_text, last_message_ts)
+    return result if isinstance(result, list) else list(chunks)
 
 
 async def send_typing_indicator(

@@ -21,7 +21,7 @@ from datetime import datetime, timezone
 import random
 from app.signals import detect_interest_level, detect_personality_type, get_approach_instructions
 
-async def process_conversation(phone: str, message: str, conversation_id: str = "", message_id: str = "", last_message_ts: float = 0):
+async def process_conversation(phone: str, message: str, conversation_id: str = "", message_id: str = "", last_message_ts: float = 0, pending_message_ids: list[str] | None = None):
     """Main conversation engine logic."""
     try:
         print(f"\n[Conversation] 🚀 Starting process for {phone}: '{message[:50]}...'", flush=True)
@@ -240,31 +240,45 @@ async def process_conversation(phone: str, message: str, conversation_id: str = 
         response_text = await check_and_send_calendly(phone, response_text, session)
 
         # Step 11: Send natural multi-bubble response
+        delivered_chunks: list[str] = []
         if response_text:
             print(f"[Conversation] 📤 Splitting and sending multi-bubble response to {phone}", flush=True)
             chunks = chunk_message(response_text)
-            
-            # Use the existing utility that handles delays and typing indicators
-            await send_chunked_messages(
-                to=phone, 
-                chunks=chunks, 
-                incoming_text=message, 
-                last_message_ts=last_message_ts, 
-                message_id=message_id
+
+            # send_chunked_messages returns ONLY the chunks that actually
+            # got HTTP 200 from the provider — anything dropped here would
+            # otherwise show up on the dashboard but never on mobile WhatsApp.
+            delivered_chunks = await send_chunked_messages(
+                to=phone,
+                chunks=chunks,
+                incoming_text=message,
+                last_message_ts=last_message_ts,
+                message_id=message_id,
+                pending_message_ids=pending_message_ids,
             )
-            
+
             if lead_id:
                 await tracker.set_typing_status(lead_id, False)
 
-        # Step 12: Update session history and turn count
-        session["history"].append({"role": "user", "content": message})
-        session["history"].append({"role": "assistant", "content": response_text})
-        session["history"] = session["history"][-50:]
-        session["turn_count"] += 1
-        session["last_updated"] = datetime.now(timezone.utc).isoformat()
+            if len(delivered_chunks) < len(chunks):
+                logger.error(
+                    "[Conversation] %s: only %d/%d chunks delivered to mobile — dashboard will only show delivered chunks",
+                    phone, len(delivered_chunks), len(chunks),
+                )
 
-        # Step 13: Tracking outbound
-        await tracker.log_outbound(lead_id, response_text)
+        # Step 12: Update session history with what actually went out
+        delivered_text = "\n\n".join(delivered_chunks).strip() if delivered_chunks else ""
+        if delivered_text:
+            session["history"].append({"role": "user", "content": message})
+            session["history"].append({"role": "assistant", "content": delivered_text})
+            session["history"] = session["history"][-50:]
+            session["turn_count"] += 1
+            session["last_updated"] = datetime.now(timezone.utc).isoformat()
+
+        # Step 13: Tracking outbound — log each delivered chunk separately
+        # so the dashboard message list mirrors WhatsApp bubble-by-bubble.
+        for chunk_text in delivered_chunks:
+            await tracker.log_outbound(lead_id, chunk_text)
 
         # Step 14: Check for state transition
         new_state = check_transition(session["state"], session)

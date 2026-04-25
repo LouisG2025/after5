@@ -8,6 +8,7 @@ Communicates via HTTP to BAILEYS_SERVICE_URL (default http://localhost:3001).
 """
 import asyncio
 import logging
+import time
 
 import httpx
 
@@ -34,22 +35,32 @@ async def _resolve_to_lid(phone_digits: str) -> str:
 
 
 async def send_message(to: str, body: str) -> Optional[dict]:
-    """Send a plain text message via the Baileys bridge."""
+    """Send a plain text message via the Baileys bridge.
+    One automatic retry on transient failures (network blip, brief 503).
+    Returns the response dict on success, None on hard failure — callers
+    MUST check the return value before logging to the dashboard, otherwise
+    the dashboard will show messages that the mobile WhatsApp never got.
+    """
     url = f"{settings.BAILEYS_SERVICE_URL}/send"
     digits = _normalize_phone(to)
     resolved = await _resolve_to_lid(digits)
     payload = {"phone": resolved, "text": body}
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.post(url, json=payload)
-            if resp.status_code == 200:
-                logger.info(f"[Baileys] Sent to {to}: {body[:50]}...")
-                return resp.json()
-            logger.error(f"[Baileys] Send failed {resp.status_code}: {resp.text}")
-            return None
-    except Exception as e:
-        logger.error(f"[Baileys] Send error: {e}")
-        return None
+
+    for attempt in (1, 2):
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.post(url, json=payload)
+                if resp.status_code == 200:
+                    logger.info(f"[Baileys] Sent to {to}: {body[:50]}...")
+                    return resp.json()
+                logger.error(
+                    f"[Baileys] Send failed (attempt {attempt}) {resp.status_code}: {resp.text}"
+                )
+        except Exception as e:
+            logger.error(f"[Baileys] Send error (attempt {attempt}): {e}")
+        if attempt == 1:
+            await asyncio.sleep(1.5)
+    return None
 
 
 async def send_typing_indicator(to: str, message_id: str = "") -> bool:
@@ -68,17 +79,10 @@ async def send_typing_indicator(to: str, message_id: str = "") -> bool:
 
 
 async def mark_as_read(message_id: str) -> None:
-    """
-    Mark a message as read (blue ticks).
-    Note: Baileys requires both phone and message_id. The caller must have
-    stored the phone separately (see webhook.py) — we accept only message_id
-    to match the whatsapp_client.mark_as_read signature, and look up the phone
-    from Redis.
-    """
+    """Mark a single message as read (blue ticks)."""
     if not message_id:
         return
     try:
-        # Look up phone for this message_id
         from app.redis_client import redis_client
         phone_val = await redis_client.redis.get(f"msgid_phone:{message_id}")
         if not phone_val:
@@ -91,6 +95,32 @@ async def mark_as_read(message_id: str) -> None:
             await client.post(url, json=payload)
     except Exception as e:
         logger.debug(f"[Baileys] Mark-as-read error: {e}")
+
+
+async def mark_batch_as_read(phone: str, message_ids: list[str]) -> None:
+    """Blue-tick a burst of messages from the same lead in one batch.
+    When a lead sends 3 messages quickly, we want all 3 to flip to read at
+    once when the silence timer fires — not one at a time, and not just the
+    last one.
+    """
+    if not message_ids:
+        return
+    digits = _normalize_phone(phone)
+    resolved = await _resolve_to_lid(digits)
+    url = f"{settings.BAILEYS_SERVICE_URL}/read"
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            # Fire all reads in parallel so the ticks flip together
+            await asyncio.gather(
+                *[
+                    client.post(url, json={"phone": resolved, "message_id": mid})
+                    for mid in message_ids
+                    if mid
+                ],
+                return_exceptions=True,
+            )
+    except Exception as e:
+        logger.debug(f"[Baileys] Batch mark-as-read error: {e}")
 
 
 async def _clear_typing(to: str) -> None:
@@ -181,7 +211,8 @@ async def send_chunked_messages(
     last_message_ts: float = 0,
     message_id: str = "",
     interruptible: bool = True,
-) -> None:
+    pending_message_ids: Optional[list[str]] = None,
+) -> list[str]:
     """
     Send multiple messages with realistic human-like timing sequence.
     Mirrors whatsapp_client.send_chunked_messages but uses the Baileys bridge.
@@ -195,14 +226,30 @@ async def send_chunked_messages(
     from app.redis_client import redis_client
     import time as _time
 
+    sent: list[str] = []  # chunks that actually got HTTP 200 from Baileys
+
     if not interruptible:
         # Fast path with no interrupt checks (used for hardcoded templates)
         for chunk in chunks:
-            await send_message(to, format_message(chunk))
-        return
+            formatted = format_message(chunk)
+            result = await send_message(to, formatted)
+            if result is not None:
+                sent.append(formatted)
+        return sent
 
     current_time = _time.time()
     sequences = calculate_chunk_sequence(incoming_text, chunks, last_message_ts, current_time)
+
+    # Build the batch of message_ids we'll blue-tick at once. Falls back to
+    # the single message_id if the caller didn't pass a list.
+    ids_to_read = list(pending_message_ids) if pending_message_ids else (
+        [message_id] if message_id else []
+    )
+
+    t_start = _time.time()
+    logger.info(
+        f"[timing] {to} sequences={[{k: round(v, 2) for k, v in s.items()} for s in sequences]}"
+    )
 
     async def _interruptible_sleep(duration: float) -> bool:
         """Sleep, checking for interrupts. Returns True if interrupted to abort."""
@@ -222,35 +269,48 @@ async def send_chunked_messages(
     for i, chunk in enumerate(chunks):
         seq = sequences[i]
 
-        # 1. Blue tick delay
+        # 1. Blue tick delay (only fires for first chunk; batch-tick all
+        # buffered messages so the burst flips read together)
         if seq["blue_tick_delay"] > 0:
             if await _interruptible_sleep(seq["blue_tick_delay"]):
-                return
-            if message_id:
-                await mark_as_read(message_id)
+                return sent
+            if ids_to_read:
+                await mark_batch_as_read(to, ids_to_read)
+                logger.info(f"[timing] {to} blue-ticked {len(ids_to_read)} msg(s) at +{round(_time.time() - t_start, 2)}s")
 
         # 2. Reading delay
         if await _interruptible_sleep(seq["reading_delay"]):
-            return
+            return sent
 
         # 3. Think pause
         if await _interruptible_sleep(seq["think_pause"]):
-            return
+            return sent
 
         # 4. Typing delay (show indicator, poll for interrupts)
         if seq["typing_delay"] > 0:
             await send_typing_indicator(to, message_id)
             if await _interruptible_sleep(seq["typing_delay"]):
                 await _clear_typing(to)
-                return
+                return sent
 
         # 5. Review pause
         if await _interruptible_sleep(seq["review_pause"]):
-            return
+            return sent
 
-        # 6. Send the bubble (pass incoming_text for context-aware AI disclosure filter)
+        # 6. Send the bubble. Only mark as 'sent' if Baileys returns 200,
+        # so the dashboard log stays in sync with what mobile WhatsApp got.
         formatted = format_message(chunk, last_user_message=incoming_text)
-        await send_message(to, formatted)
+        result = await send_message(to, formatted)
+        if result is not None:
+            sent.append(formatted)
+            logger.info(f"[timing] {to} chunk {i+1}/{len(chunks)} sent at +{round(_time.time() - t_start, 2)}s")
+        else:
+            # Send failed even after retry. Stop the chain — sending later
+            # chunks when an earlier one failed leaves WhatsApp out of order.
+            logger.error(f"[Baileys] Hard fail on chunk {i+1}/{len(chunks)} for {to}, aborting remaining chunks")
+            return sent
+
+    return sent
 
 
 async def is_connected() -> bool:

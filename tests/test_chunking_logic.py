@@ -47,10 +47,11 @@ def test_chunking():
     print(f"Hard cap: {chunks5}")
     assert len(chunks5) <= 3
     
-    # Test 6: Typing delay
+    # Test 6: Typing delay — realistic human phone-typing speed (~20 chars/sec)
+    # 18-char message: floor 1.5s for short replies, capped at 2.5s
     delay = calculate_typing_delay("How are you today?")
     print(f"Delay for 'How are you today?': {delay:.2f}s")
-    assert 1.0 <= delay <= 3.5
+    assert 1.2 <= delay <= 2.6, f"Short reply at human pace, got {delay:.2f}s"
 
 if __name__ == "__main__":
     test_chunking()
