@@ -76,6 +76,10 @@ class Settings(BaseSettings):
     VOICE_NOTE_ACKNOWLEDGE: bool = True
     VOICE_NOTE_ACK_MESSAGE: str = "" # "Got your voice note, let me listen..."
 
+    # Security
+    AFTER5_API_KEY: str = os.getenv("AFTER5_API_KEY", "")
+    CORS_ALLOWED_ORIGINS: str = os.getenv("CORS_ALLOWED_ORIGINS", "http://localhost:3000")
+
     # Human-like Behavior
     MARK_AS_READ_DELAY: float = 2.0
     SHOW_TYPING_INDICATOR: bool = True

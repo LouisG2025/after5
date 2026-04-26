@@ -2,7 +2,8 @@ import asyncio
 import logging
 import random
 import time
-from fastapi import APIRouter, Request, Response, BackgroundTasks
+from fastapi import APIRouter, Request, Response, BackgroundTasks, Depends
+from app.auth import require_api_key
 from pydantic import BaseModel
 from app.config import settings
 from app.redis_client import redis_client
@@ -555,7 +556,7 @@ async def _process_with_interrupt_protection(
 
 # Admin endpoints... (Keeping them)
 @router.post("/admin/reset-session")
-async def admin_reset_session(request: Request):
+async def admin_reset_session(request: Request, _: None = Depends(require_api_key)):
     try:
         body = await request.json()
         phone = body.get("phone", "").strip()

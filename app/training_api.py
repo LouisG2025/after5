@@ -2,14 +2,15 @@ import os
 import json
 import logging
 from typing import List, Dict, Any
-from fastapi import APIRouter, HTTPException, BackgroundTasks
+from fastapi import APIRouter, HTTPException, BackgroundTasks, Depends
+from app.auth import require_api_key
 from app.config import settings
 from app.redis_client import redis_client
 from app.conversation_library import load_conversation_library
 from app.supabase_client import supabase_client
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/training", tags=["training"])
+router = APIRouter(prefix="/training", tags=["training"], dependencies=[Depends(require_api_key)])
 
 CONVERSATIONS_DIR = "conversations"
 

@@ -14,7 +14,8 @@ import re
 from pathlib import Path
 from typing import Dict, List
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
+from app.auth import require_api_key
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
@@ -209,7 +210,7 @@ OUTPUT FORMAT:
 """
 
 logger = logging.getLogger(__name__)
-router = APIRouter(tags=["test-chat"])
+router = APIRouter(tags=["test-chat"], dependencies=[Depends(require_api_key)])
 
 # In-memory session store keyed by phone (no Redis needed for testing)
 _test_sessions: Dict[str, List[Dict[str, str]]] = {}

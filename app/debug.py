@@ -8,14 +8,15 @@ form-submit state instead of a manual 'hello'.
 
 import asyncio
 import logging
-from fastapi import APIRouter, Body
+from fastapi import APIRouter, Body, Depends
+from app.auth import require_api_key
 from app.supabase_client import supabase_client
 from app.redis_client import redis_client
 from app.phone_utils import normalize_phone
 from app.outbound import send_initial_outreach
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/debug", tags=["debug"])
+router = APIRouter(prefix="/debug", tags=["debug"], dependencies=[Depends(require_api_key)])
 
 
 REDIS_KEY_PATTERNS = [

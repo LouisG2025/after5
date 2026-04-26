@@ -1,6 +1,7 @@
 import asyncio
 import logging
-from fastapi import APIRouter, Body, BackgroundTasks
+from fastapi import APIRouter, Body, BackgroundTasks, Depends
+from app.auth import require_api_key
 from app.models import LeadCreate
 from app.supabase_client import supabase_client
 from app.messaging import (
@@ -130,12 +131,12 @@ async def send_initial_outreach(name_raw: str, phone_raw: str, company_raw: str,
         logger.error("[Outreach] 🚨 Failed to send initial outreach for %s: %s", phone_raw, e, exc_info=True)
 
 @router.post("/send-outbound")
-async def send_outbound(lead: LeadCreate, background_tasks: BackgroundTasks = None):
+async def send_outbound(lead: LeadCreate, background_tasks: BackgroundTasks = None, _: None = Depends(require_api_key)):
     asyncio.create_task(send_initial_outreach(lead.name, lead.phone, lead.company))
     return {"status": "outreach_scheduled"}
 
 @router.post("/form-webhook")
-async def form_webhook(payload: dict):
+async def form_webhook(payload: dict, _: None = Depends(require_api_key)):
     """Endpoint for n8n/website form submissions.
 
     If the lead is new → normal outreach.
@@ -281,7 +282,7 @@ async def send_follow_up_message(lead_id: str, name: str, phone: str):
         logger.error("[Follow-up] 🚨 Failed to send follow-up for %s: %s", name, e, exc_info=True)
 
 @router.post("/follow-up")
-async def trigger_follow_up(payload: dict = Body(...)):
+async def trigger_follow_up(payload: dict = Body(...), _: None = Depends(require_api_key)):
     """Admin endpoint to manually trigger a follow-up for a lead."""
     lead_id = payload.get("lead_id")
     name = payload.get("name")
