@@ -22,7 +22,7 @@ class AlbertTracker:
         industry: str = "",
         lead_source: str = "Other",
         form_message: str = "",
-    ) -> dict:
+    ) -> Optional[dict]:
         """Call when a new lead submits the form or contacts Albert for the first time."""
         try:
             # Check if lead already exists (duplicate phone)
@@ -53,7 +53,14 @@ class AlbertTracker:
 
         except Exception as e:
             print(f"[Albert Tracker Error] create_lead: {e}")
-        return {}
+            # Retry lookup — the lead may have been created by a concurrent request
+            try:
+                existing = await self.get_lead_by_phone(phone)
+                if existing:
+                    return existing
+            except Exception:
+                pass
+        return None
 
     async def get_lead_by_phone(self, phone: str) -> Optional[dict]:
         """Call on every incoming WhatsApp message to find the lead with retry logic."""

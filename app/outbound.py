@@ -3,12 +3,12 @@ import logging
 from fastapi import APIRouter, Body, BackgroundTasks
 from app.models import LeadCreate
 from app.supabase_client import supabase_client
-from app.whatsapp_client import (
-    send_message, 
-    send_typing_indicator, 
+from app.messaging import (
+    send_message,
+    send_typing_indicator,
     send_chunked_messages,
-    send_template_message
 )
+from app.whatsapp_client import send_template_message
 from app.redis_client import redis_client
 from app.models import ConversationState
 from app.tracker import AlbertTracker

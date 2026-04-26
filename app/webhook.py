@@ -445,8 +445,13 @@ async def _background_tracker_log(phone: str, name: str, message: str):
         lead = await tracker.get_lead_by_phone(phone)
         if not lead:
             lead = await tracker.create_lead(phone=phone, first_name=name)
-        if lead:
+        if not lead:
+            # Final fallback — retry lookup once more
+            lead = await tracker.get_lead_by_phone(phone)
+        if lead and lead.get("id"):
             await tracker.log_inbound(lead["id"], message)
+        else:
+            logger.warning("[Webhook] Could not find/create lead for %s — inbound message not logged", phone)
     except Exception as e:
         logger.error("[Webhook] Background Tracker failed: %s", e)
 

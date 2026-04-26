@@ -49,6 +49,7 @@ async def send_chunked_messages(
     last_message_ts: float = 0,
     message_id: str = "",
     pending_message_ids: Optional[list[str]] = None,
+    interruptible: bool = True,
 ) -> list[str]:
     """Send chunked messages and return the list of chunks that ACTUALLY
     delivered. Callers must use the returned list (not the input chunks)
@@ -60,11 +61,13 @@ async def send_chunked_messages(
         result = await baileys.send_chunked_messages(
             to, chunks, incoming_text, last_message_ts, message_id,
             pending_message_ids=pending_message_ids,
+            interruptible=interruptible,
         )
         return result if isinstance(result, list) else []
     if provider == "whatsapp_cloud":
         result = await cloud.send_chunked_messages(
-            to, chunks, incoming_text, last_message_ts, message_id
+            to, chunks, incoming_text, last_message_ts, message_id,
+            interruptible=interruptible,
         )
         # Cloud client may not yet return a list; fall back to assuming
         # all chunks delivered when the call completed without raising.
