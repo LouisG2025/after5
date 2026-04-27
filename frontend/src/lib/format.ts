@@ -16,10 +16,21 @@ export function formatRelative(iso: string): string {
   return d.toLocaleDateString();
 }
 
+export function displayName(first: string, last: string, phone?: string | null): string {
+  const full = `${first || ""} ${last || ""}`.trim();
+  if (full) return full;
+  if (phone) return formatPhone(phone);
+  return "Unknown";
+}
+
+export function formatPhone(phone: string): string {
+  return phone.replace("whatsapp:", "").replace(/^\+/, "+");
+}
+
 export function initials(first: string, last: string): string {
   const f = (first || "").trim();
   const l = (last || "").trim();
-  if (!f && !l) return "?";
+  if (!f && !l) return "#";
   return ((f[0] ?? "") + (l[0] ?? "")).toUpperCase() || "?";
 }
 

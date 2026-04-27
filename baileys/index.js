@@ -25,11 +25,14 @@ const {
   useMultiFileAuthState,
   DisconnectReason,
   fetchLatestBaileysVersion,
+  makeCacheableSignalKeyStore,
+  makeInMemoryStore,
 } = pkg;
 import pino from "pino";
 import qrcode from "qrcode-terminal";
 import express from "express";
 import axios from "axios";
+import fs from "fs";
 
 // ---------- Config -----------------------------------------------
 const PORT = Number(process.env.BAILEYS_PORT || 3001);
@@ -49,10 +52,49 @@ const logger = pino({
 // ---------- Baileys socket ---------------------------------------
 let sock = null;
 
+// In-memory store for message retry and session management
+const store = makeInMemoryStore({ logger: pino({ level: "silent" }) });
+store.readFromFile("./baileys_store.json");
+setInterval(() => store.writeToFile("./baileys_store.json"), 30_000);
+
+// Message cache for retry requests (fixes "waiting for this message")
+const msgRetryCache = new Map();
+
 // Map: phoneDigits → original JID (e.g. "72666702676122" → "72666702676122@lid")
 // We store this on every inbound message so outbound replies go back to the
 // same JID, including for anonymised @lid chats where there's no real phone.
 const jidByPhone = new Map();
+
+// Bidirectional LID ↔ real phone mapping (persisted to disk)
+const LID_MAP_FILE = "./lid_phone_map.json";
+const lidToPhone = new Map(); // lidDigits → realPhoneDigits
+const phoneToLid = new Map(); // realPhoneDigits → lidDigits
+
+function loadLidMap() {
+  try {
+    if (fs.existsSync(LID_MAP_FILE)) {
+      const data = JSON.parse(fs.readFileSync(LID_MAP_FILE, "utf8"));
+      for (const [lid, phone] of Object.entries(data)) {
+        lidToPhone.set(lid, phone);
+        phoneToLid.set(phone, lid);
+      }
+      console.log(`📋 Loaded ${lidToPhone.size} LID→phone mappings`);
+    }
+  } catch (err) {
+    console.error(`Failed to load LID map: ${err.message}`);
+  }
+}
+
+function saveLidMap() {
+  try {
+    const obj = Object.fromEntries(lidToPhone);
+    fs.writeFileSync(LID_MAP_FILE, JSON.stringify(obj, null, 2));
+  } catch (err) {
+    console.error(`Failed to save LID map: ${err.message}`);
+  }
+}
+
+loadLidMap();
 
 async function startBaileys() {
   const { state, saveCreds } = await useMultiFileAuthState(AUTH_FOLDER);
@@ -62,13 +104,25 @@ async function startBaileys() {
 
   sock = makeWASocket({
     version,
-    auth: state,
-    printQRInTerminal: false, // we handle QR ourselves for a cleaner UX
+    auth: {
+      creds: state.creds,
+      keys: makeCacheableSignalKeyStore(state.keys, logger),
+    },
+    printQRInTerminal: false,
     logger: pino({ level: "silent" }),
     browser: ["After5 Albert", "Chrome", "1.0.0"],
-    markOnlineOnConnect: false,
+    markOnlineOnConnect: true,
     syncFullHistory: false,
+    msgRetryCounterCache: msgRetryCache,
+    getMessage: async (key) => {
+      // Provide message content for retry requests
+      const msg = await store.loadMessage(key.remoteJid, key.id);
+      return msg?.message || undefined;
+    },
   });
+
+  // Bind store to socket events for message tracking
+  store.bind(sock.ev);
 
   sock.ev.on("creds.update", saveCreds);
 
@@ -154,29 +208,42 @@ async function startBaileys() {
       let phoneJid = remoteJid;
 
       if (remoteJid?.endsWith("@lid")) {
-        // Try every known field that might contain the real phone JID
-        const candidates = [
-          msg.key.senderPn,
-          msg.key.senderLid,
-          msg.key.participantPn,
-          msg.key.participant,
-          msg.verifiedBizName,
-        ].filter(Boolean);
+        const lidDigits = remoteJid.split("@")[0];
 
-        const realJid = candidates.find(
-          (c) => typeof c === "string" && c.endsWith("@s.whatsapp.net")
-        );
-
-        if (realJid) {
-          phoneJid = realJid;
-          logger.info(`[LID→PN] ${remoteJid} resolved to ${phoneJid}`);
+        // 1. Check our persisted LID→phone map first
+        const mappedPhone = lidToPhone.get(lidDigits);
+        if (mappedPhone) {
+          phoneJid = `${mappedPhone}@s.whatsapp.net`;
+          logger.info(`[LID→PN] ${remoteJid} resolved via map to +${mappedPhone}`);
         } else {
-          // Dump the full key so we can see what's actually available
-          logger.info(
-            `[LID unresolved] ${remoteJid} → keys: ${JSON.stringify(
-              Object.keys(msg.key)
-            )} | full: ${JSON.stringify(msg.key)}`
+          // 2. Try Baileys message fields as fallback
+          const candidates = [
+            msg.key.senderPn,
+            msg.key.senderLid,
+            msg.key.participantPn,
+            msg.key.participant,
+            msg.verifiedBizName,
+          ].filter(Boolean);
+
+          const realJid = candidates.find(
+            (c) => typeof c === "string" && c.endsWith("@s.whatsapp.net")
           );
+
+          if (realJid) {
+            phoneJid = realJid;
+            // Store the mapping for future use
+            const resolvedDigits = realJid.split("@")[0];
+            lidToPhone.set(lidDigits, resolvedDigits);
+            phoneToLid.set(resolvedDigits, lidDigits);
+            saveLidMap();
+            logger.info(`[LID→PN] ${remoteJid} resolved to ${phoneJid} (saved)`);
+          } else {
+            logger.info(
+              `[LID unresolved] ${remoteJid} → keys: ${JSON.stringify(
+                Object.keys(msg.key)
+              )} | full: ${JSON.stringify(msg.key)}`
+            );
+          }
         }
       }
 
@@ -257,8 +324,23 @@ app.post("/send", async (req, res) => {
   }
   try {
     const jid = toJid(phone);
-    await sock.sendMessage(jid, { text });
+    const sent = await sock.sendMessage(jid, { text });
     logger.info(`[OUT] ${phone}: ${String(text).slice(0, 200)}`);
+
+    // Capture LID mapping: if we sent to a real phone but Baileys used a LID
+    const sentJid = sent?.key?.remoteJid;
+    const realDigits = String(phone).replace("whatsapp:", "").replace("+", "");
+    if (sentJid && sentJid.endsWith("@lid")) {
+      const lidDigits = sentJid.split("@")[0];
+      if (lidDigits !== realDigits) {
+        lidToPhone.set(lidDigits, realDigits);
+        phoneToLid.set(realDigits, lidDigits);
+        jidByPhone.set(realDigits, sentJid);
+        saveLidMap();
+        logger.info(`[LID MAP] ${lidDigits} → +${realDigits}`);
+      }
+    }
+
     res.json({ status: "sent" });
   } catch (err) {
     logger.error(`Send failed: ${err.message}`);

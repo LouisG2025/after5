@@ -52,7 +52,7 @@ async def send_initial_outreach(name_raw: str, phone_raw: str, company_raw: str,
         # Simulation Reliability: Skip delay for testing
         is_sim = form_data and form_data.get("source") == "Interactive Reset Simulation"
         if not is_sim:
-            await asyncio.sleep(15)
+            await asyncio.sleep(5)
         
         # 3. Outreach Content
         raw_template = random.choice(OUTREACH_TEMPLATES)
@@ -213,7 +213,7 @@ async def send_returning_outreach(name_raw: str, phone: str, company_raw: str, f
         )
 
         # 4. Wait a natural delay
-        await asyncio.sleep(10)
+        await asyncio.sleep(3)
 
         # 5. Build new session with the welcome-back message and previous context
         new_session = {

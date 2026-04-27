@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { Lead, Message, ConversationState } from "@/lib/types";
-import { formatTime, initials, phaseColor } from "@/lib/format";
+import { formatTime, initials, phaseColor, displayName } from "@/lib/format";
 import ResetModal from "./ResetModal";
 
 type Booking = {
@@ -70,7 +70,7 @@ export default function ChatView({ leadId }: Props) {
   }
 
   const { lead, messages, state, booking } = data;
-  const name = `${lead.first_name || ""} ${lead.last_name || ""}`.trim() || "Unknown";
+  const name = displayName(lead.first_name, lead.last_name, lead.phone);
   const phase = state?.current_state ?? "Opening";
 
   return (

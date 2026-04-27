@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import type { LeadWithState } from "@/lib/types";
-import { formatRelative, initials, phaseColor, tempColor } from "@/lib/format";
+import { formatRelative, initials, phaseColor, tempColor, displayName } from "@/lib/format";
 
 type Props = {
   selectedId: string | null;
@@ -74,7 +74,7 @@ export default function ConversationList({ selectedId, onSelect }: Props) {
         )}
         {leads.map((lead) => {
           const selected = selectedId === lead.id;
-          const name = `${lead.first_name || ""} ${lead.last_name || ""}`.trim() || "Unknown";
+          const name = displayName(lead.first_name, lead.last_name, lead.phone);
           const preview = lead.last_message?.content ?? lead.form_message ?? "(no messages yet)";
           const time = lead.last_message?.created_at ?? lead.created_at;
           const phase = lead.state?.current_state ?? "Opening";
