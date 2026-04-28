@@ -1,4 +1,53 @@
 import re
+import unicodedata
+
+
+def validate_name(name: str) -> bool:
+    """
+    Returns False if the name looks fake, gibberish, or unsuitable for use
+    in an opener. Catches: repeated words, all caps multi-word, emoji-heavy,
+    obvious test entries, single characters, and gibberish patterns.
+    """
+    if not name or not name.strip():
+        return False
+
+    cleaned = name.strip()
+
+    # Too short (single char) or too long (probably garbage)
+    if len(cleaned) < 2 or len(cleaned) > 50:
+        return False
+
+    # Contains emoji (any character in emoji Unicode categories)
+    for ch in cleaned:
+        if unicodedata.category(ch) in ("So", "Sk") or ord(ch) > 0x1F000:
+            return False
+
+    # All caps multi-word ("JOHN SMITH" is fine-ish, but "DIDDY DIDDY DIDDY" is not)
+    words = cleaned.split()
+    if len(words) > 1 and cleaned == cleaned.upper():
+        return False
+
+    # Repeated words: "Diddy Diddy Diddy", "test test"
+    lower_words = [w.lower() for w in words]
+    if len(lower_words) >= 2 and len(set(lower_words)) == 1:
+        return False
+
+    # Obvious test / gibberish entries
+    test_names = [
+        "test", "testing", "asdf", "qwerty", "aaa", "bbb", "xxx",
+        "abc", "none", "null", "na", "n/a", "fake", "anonymous",
+        "unknown", "admin", "user", "sample", "demo", "example",
+    ]
+    if cleaned.lower().rstrip(".!? ") in test_names:
+        return False
+
+    # Mostly non-letter characters (gibberish like "12345" or "!@#$%")
+    letters = sum(1 for ch in cleaned if ch.isalpha())
+    if letters < len(cleaned.replace(" ", "")) * 0.5:
+        return False
+
+    return True
+
 
 def clean_personal_name(name: str) -> str:
     """

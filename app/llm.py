@@ -196,27 +196,6 @@ class LLMClient:
         with open(prompt_path, "r", encoding="utf-8") as f:
             core_prompt = f.read()
         industry_context = ""
-        industry = (lead_data.get("industry") or "").lower()
-        industry_map = {
-            "real_estate": "real_estate.txt",
-            "property": "real_estate.txt",
-            "ecommerce": "ecommerce.txt",
-            "store": "ecommerce.txt",
-            "legal": "legal.txt",
-            "law": "legal.txt",
-            "clinic": "clinics.txt",
-            "dental": "clinics.txt"
-        }
-
-        # Check message for industry keywords too
-        msg_lower = message.lower()
-        for key, filename in industry_map.items():
-            if key in industry or key in msg_lower:
-                path = os.path.join(os.getcwd(), "prompts", "knowledge", filename)
-                if os.path.exists(path):
-                    with open(path, "r", encoding="utf-8") as f:
-                        industry_context = f"\n═══ INDUSTRY VERTICAL KNOWLEDGE ═══\n" + f.read()
-                break
 
         # 2. Dynamic Objection Injection
         objection_context = ""
@@ -332,7 +311,6 @@ class LLMClient:
         replacements = {
             "{{lead_name}}": lead_data.get("name", lead_data.get("first_name", "there")),
             "{{lead_company}}": lead_data.get("company", "your company"),
-            "{{lead_industry}}": lead_data.get("industry", "their industry"),
             "{{lead_company_summary}}": lead_data.get("form_message", ""),
             "{{current_state}}": current_state_val,
             "{{scoring_status}}": scoring_status,

@@ -52,7 +52,7 @@ def _normalize_urls(text: str) -> str:
     different URL, or picks up a stale one from the prompt, force it to the
     value configured in .env.
     """
-    canonical = settings.CALENDLY_LINK or "https://calendly.com/after5-louis/15min"
+    canonical = settings.CALENDLY_LINK or "https://calendly.com/after5/free-discovery-call"
     return _URL_RE.sub(canonical, text)
 
 
@@ -128,7 +128,7 @@ def clean_llm_output(raw: str) -> List[str]:
                 p_lower = p.lower()
 
         # Filter out stray leftover placeholders-as-words
-        for ph in ("lead_name", "lead_company", "lead_industry", "calendly_link"):
+        for ph in ("lead_name", "lead_company", "calendly_link"):
             p = p.replace(ph, "").replace(f"{{{ph}}}", "")
         p = re.sub(r"\s{2,}", " ", p).strip()
 
@@ -168,11 +168,10 @@ def _inject_placeholders(prompt: str) -> str:
     replacements = {
         "{{lead_name}}": "there",
         "{{lead_company}}": "your business",
-        "{{lead_industry}}": "your industry",
         "{{lead_company_summary}}": "",
         "{{current_state}}": "Opening",
         "{{scoring_status}}": "discovering",
-        "{{calendly_link}}": settings.CALENDLY_LINK or "https://calendly.com/after5-louis/15min",
+        "{{calendly_link}}": settings.CALENDLY_LINK or "https://calendly.com/after5/free-discovery-call",
         "{{bant_scores}}": "",
         "{{conversation_history}}": "",
         "{{current_datetime}}": "",
@@ -244,7 +243,7 @@ DEMO_FLOW = [
     # Reply 4 — normalise and build rapport
     "Makes sense, most agencies we work with have the same problem, it's why Albert exists",
     # Reply 5 — book (chunked: statement + Calendly link as its own bubble)
-    "Quickest way is to jump on a 15 minute call with Louis, he'll walk you through exactly how we'd set it up for you|||https://calendly.com/after5-louis/15min",
+    "Quickest way is to jump on a 15 minute call with Louis, he'll walk you through exactly how we'd set it up for you|||https://calendly.com/after5/free-discovery-call",
     # Reply 6+ — holding pattern after link sent
     "No rush, just hit the link when you've got a sec",
 ]

@@ -14,9 +14,13 @@ from app.redis_client import redis_client
 from app.models import ConversationState
 from app.tracker import AlbertTracker
 from app.chunker import chunk_message, calculate_typing_delay, format_message
-from app.templates import OUTREACH_TEMPLATES, FOLLOW_UP_TEMPLATE, RETURNING_LEAD_TEMPLATES
+from app.templates import (
+    OUTREACH_TEMPLATES, OUTREACH_TEMPLATES_NO_NAME,
+    FOLLOW_UP_TEMPLATE, FOLLOW_UP_TEMPLATE_NO_NAME,
+    RETURNING_LEAD_TEMPLATES, RETURNING_LEAD_TEMPLATES_NO_NAME,
+)
 from app.phone_utils import normalize_phone
-from app.name_utils import clean_personal_name, clean_company_name
+from app.name_utils import clean_personal_name, clean_company_name, validate_name
 from datetime import datetime, timezone
 import random
 
@@ -31,7 +35,13 @@ async def send_initial_outreach(name_raw: str, phone_raw: str, company_raw: str,
         # Normalize name and company for display and storage
         name = clean_personal_name(name_raw)
         company = clean_company_name(company_raw)
-        
+
+        # Validate name — if it looks fake/gibberish, skip using it in the opener
+        if not validate_name(name):
+            logger.info("[Outreach] Name '%s' failed validation, skipping name and company in opener", name_raw)
+            name = ""
+            company = ""
+
         # Normalize phone to internal format: whatsapp:+[digits]
         sender_phone = normalize_phone(phone_raw)
 
@@ -54,9 +64,20 @@ async def send_initial_outreach(name_raw: str, phone_raw: str, company_raw: str,
         if not is_sim:
             await asyncio.sleep(5)
         
-        # 3. Outreach Content
-        raw_template = random.choice(OUTREACH_TEMPLATES)
-        first_message_content = raw_template.format(name=name, company_name=company)
+        # 3. Outreach Content (use no-name template if name was invalid)
+        if name:
+            raw_template = random.choice(OUTREACH_TEMPLATES)
+            first_message_content = raw_template.format(name=name, company_name=company)
+        else:
+            raw_template = random.choice(OUTREACH_TEMPLATES_NO_NAME)
+            first_message_content = raw_template
+
+        # Formatting pass: enforce blank lines between sentences in the opener
+        # so WhatsApp renders paragraph spacing consistently
+        import re as _re
+        sentences = _re.split(r'(?<=[.!?])\s+', first_message_content)
+        if len(sentences) > 1:
+            first_message_content = "\n\n".join(s.strip() for s in sentences if s.strip())
         
         # 4. Attempt Template Outreach (Highly Recommended for WhatsApp Cloud API)
         template_name = "after5_outreach"
@@ -140,8 +161,7 @@ async def form_webhook(payload: dict, _: None = Depends(require_api_key)):
     """Endpoint for n8n/website form submissions.
 
     If the lead is new → normal outreach.
-    If the lead already exists (same phone) → welcome-back flow that
-    preserves awareness of the previous conversation.
+    If the lead already exists (same phone) → check cooldown, then welcome-back flow.
     """
     name = payload.get("first_name") or payload.get("name")
     phone = payload.get("phone")
@@ -155,6 +175,14 @@ async def form_webhook(payload: dict, _: None = Depends(require_api_key)):
     existing_lead = await tracker.get_lead_by_phone(normalized)
 
     if existing_lead:
+        # --- Phone number cooldown: block repeat demo submissions ---
+        # If this number already had a completed conversation (CLOSED or CONFIRMED),
+        # redirect rather than running the full flow again.
+        session = await redis_client.get_session(normalized)
+        if session and session.get("state") in [ConversationState.CLOSED, ConversationState.CONFIRMED]:
+            logger.info("[Form Webhook] 🚫 Cooldown active for %s — already completed a conversation", normalized)
+            return {"status": "cooldown_active", "message": "This number has already completed a demo conversation"}
+
         # --- Returning lead: welcome-back flow ---
         logger.info("[Form Webhook] 🔁 Returning lead detected: %s (%s)", name, normalized)
         asyncio.create_task(
@@ -207,10 +235,18 @@ async def send_returning_outreach(name_raw: str, phone: str, company_raw: str, f
                 update_payload["form_message"] = form_data["message"]
             await client.table("leads").update(update_payload).eq("id", lead_id).execute()
 
+        # Validate name for returning leads too
+        if not validate_name(name):
+            name = ""
+            company = ""
+
         # 3. Pick a welcome-back template
-        welcome_msg = random.choice(RETURNING_LEAD_TEMPLATES).format(
-            name=name, company_name=company
-        )
+        if name:
+            welcome_msg = random.choice(RETURNING_LEAD_TEMPLATES).format(
+                name=name, company_name=company
+            )
+        else:
+            welcome_msg = random.choice(RETURNING_LEAD_TEMPLATES_NO_NAME)
 
         # 4. Wait a natural delay
         await asyncio.sleep(3)

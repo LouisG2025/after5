@@ -181,6 +181,22 @@ async def process_conversation(phone: str, message: str, conversation_id: str = 
 
         # ... (Step 4 is moved up, so we'll just skip it below) ...
 
+        # Step 4.5: Demo safety limit — if 50+ messages with no booking, graceful exit
+        turn_count = session.get("turn_count", 0)
+        if turn_count >= 50 and session.get("state") not in [ConversationState.CONFIRMED, ConversationState.CLOSED]:
+            logger.info("[Conversation] Safety limit hit (50+ turns) for %s. Sending graceful exit.", phone)
+            exit_msg = "Hey, I think we've covered a lot here. If you want to take the next step, the best thing is to grab a time with Louis. Otherwise, no stress at all, you know where to find us"
+            await send_message(phone, exit_msg)
+            session["state"] = ConversationState.CLOSED
+            session["history"].append({"role": "user", "content": message})
+            session["history"].append({"role": "assistant", "content": exit_msg})
+            session["last_updated"] = datetime.now(timezone.utc).isoformat()
+            await redis_client.save_session(phone, session)
+            await redis_client.clear_generating(phone)
+            if lead_id:
+                await tracker.update_state(lead_id, "Closed")
+            return
+
         # Step 5: DO NOT show typing indicator yet. The natural sequence is:
         #   blue-tick (seen) → reading delay → think pause → typing → send
         # send_chunked_messages handles all of that. Showing typing before
@@ -559,7 +575,7 @@ async def build_enhanced_context(session: dict, lead_data: dict, message: str, k
     instruction += approach + "\n"
     
     # 4. Inject Form context (Issue 9)
-    form_keys = ["name", "email", "company", "industry", "message", "lead_source", "website", "company_size", "role"]
+    form_keys = ["name", "email", "company", "message", "lead_source", "website", "company_size", "role"]
     form_details = []
     for k in form_keys:
         val = lead_data.get(k)
@@ -567,7 +583,7 @@ async def build_enhanced_context(session: dict, lead_data: dict, message: str, k
             form_details.append(f"{k.replace('_', ' ').capitalize()}: {val}")
     
     if form_details:
-        instruction += f"\nFORM DATA SUBMITTED BY LEAD:\n" + "\n".join(form_details) + "\nThis is ONLY background context for you. Do NOT assume anything from this data. Do NOT reference their industry, lead volume, problems, or terminology unless THEY mention it first in the conversation. The industry field tells you their general space, nothing else. Never say things like 'property enquiries', 'discovery calls', 'viewings', 'qualifying leads', or any industry-specific term unless the lead used that term first. Always ask what they do and what they need. NEVER skip discovery questions based on form data. If you catch yourself about to reference something from form data that the lead hasn't said, STOP and ask a genuine question instead.\n"
+        instruction += f"\nFORM DATA SUBMITTED BY LEAD:\n" + "\n".join(form_details) + "\nThis is ONLY background context for you. Do NOT assume anything from this data. Do NOT reference their lead volume, problems, or terminology unless THEY mention it first in the conversation. Never say things like 'property enquiries', 'discovery calls', 'viewings', 'qualifying leads', or any industry-specific term unless the lead used that term first. Always ask what they do and what they need. NEVER skip discovery questions based on form data. If you catch yourself about to reference something from form data that the lead hasn't said, STOP and ask a genuine question instead.\n"
 
     # Inject returning lead context if present
     returning_context = session.get("previous_context", "")

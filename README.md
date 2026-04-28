@@ -3,10 +3,10 @@
 This is a complete WhatsApp AI sales agent project for After5 Digital.
 
 ## Features
-1. Receives incoming WhatsApp messages via Twilio webhook.
+1. Receives incoming WhatsApp messages via Baileys (QR-paired) or WhatsApp Cloud API webhook.
 2. Manages conversation state (Opening → Discovery → Qualification → Booking → Escalation).
 3. Calls an LLM via OpenRouter to generate natural responses.
-4. Sends replies back through Twilio.
+4. Sends replies back through Baileys or WhatsApp Cloud API.
 5. Extracts BANT scores (Budget, Authority, Need, Timeline) in the background.
 6. Tracks everything in Supabase.
 7. Uses Redis for session state and conversation memory.
@@ -17,12 +17,13 @@ This is a complete WhatsApp AI sales agent project for After5 Digital.
 ## Tech Stack
 - Python 3.11
 - FastAPI (async)
-- Twilio WhatsApp API
+- Baileys (QR-paired WhatsApp via local Node bridge) for demo/development
+- WhatsApp Cloud API (official Meta API) for production deployments
 - OpenRouter for LLM calls (supports Claude, GPT-4o, Gemini, etc.)
 - Redis for session state, conversation history, dedup, and input buffering
 - Supabase for persistent storage (leads, messages, status)
 - Helicone for LLM observability (optional proxy)
-- Deployed on Railway
+- Deployed on AWS
 
 ## Quick Start
 1. Clone the repository.
@@ -35,16 +36,18 @@ Check `.env.example` for the full list of required variables.
 
 ## API Endpoints
 - `GET /`: Health check.
-- `POST /webhook`: Twilio webhook handler.
+- `POST /baileys/incoming`: Baileys webhook handler for incoming messages.
+- `POST /webhook`: WhatsApp Cloud API webhook handler.
 - `POST /send-outbound`: Outbound message sender.
 - `POST /form-webhook`: For n8n/website form submissions.
+- `POST /calendly-webhook`: Calendly booking confirmation webhook.
 
 ## Architecture Overview
-1.  **Webhook**: Incoming message is received.
+1.  **Webhook**: Incoming message is received (Baileys or Cloud API).
 2.  **Buffering**: Input is buffered in Redis to handle multiple messages.
 3.  **Processing**: Conversation engine is triggered after buffer timeout.
 4.  **LLM Call**: Context is built and OpenRouter is called.
 5.  **Chunking**: Response is split into multiple messages if needed.
-6.  **Delivery**: Messages are sent via Twilio with typing indicators.
+6.  **Delivery**: Messages are sent via Baileys/Cloud API with typing indicators.
 7.  **BANT Extraction**: Qualification signals are extracted in the background.
 8.  **Logging**: Everything is saved to Supabase for persistent tracking.
