@@ -7,7 +7,7 @@ from openai import AsyncOpenAI
 from app.config import settings
 from app.tracker import AlbertTracker
 from app.conversation_library import get_relevant_example
-from app.signals import detect_personality_type, detect_objection_type
+from app.signals import detect_objection_type
 from app.redis_client import redis_client
 
 tracker = AlbertTracker()
@@ -246,17 +246,12 @@ class LLMClient:
         # 3. Dynamic Example Injection (Phase 2)
         example_context = ""
         try:
-            # Detect signals for example matching
-            history_contents = [m["content"] for m in session.get("history", []) if m["role"] == "user"]
-            personality = detect_personality_type(history_contents)
             objection = detect_objection_type(message)
-            
+
             example = await get_relevant_example(
                 redis_client.redis,
-                industry=industry,
                 stage=session.get("state", "opening"),
                 objection=objection,
-                personality=personality
             )
             
             if example:
@@ -324,10 +319,30 @@ class LLMClient:
             system_prompt = system_prompt.replace(key, str(value))
 
         messages = [{"role": "system", "content": system_prompt}]
-        for msg in session.get("history", []):
+        history = session.get("history", [])
+
+        # Token budget guard: estimate total tokens and trim oldest history
+        # if we're approaching the limit. 1 token ≈ 4 chars is a safe estimate.
+        MAX_TOKENS = 100_000  # safe limit for Claude Sonnet / GPT-4o
+        system_tokens = len(system_prompt) // 4
+        message_tokens = len(message) // 4
+        available_for_history = MAX_TOKENS - system_tokens - message_tokens - 500  # 500 buffer
+
+        # Trim from the oldest if history is too large
+        history_tokens = sum(len(m.get("content", "")) // 4 for m in history)
+        if history_tokens > available_for_history:
+            trimmed = 0
+            while history and history_tokens > available_for_history:
+                removed = history.pop(0)
+                history_tokens -= len(removed.get("content", "")) // 4
+                trimmed += 1
+            if trimmed:
+                print(f"[LLM] ⚠️ Trimmed {trimmed} oldest messages from history (token budget)", flush=True)
+
+        for msg in history:
             messages.append(msg)
         messages.append({"role": "user", "content": message})
-        
+
         return messages
 
 llm_client = LLMClient()

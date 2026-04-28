@@ -19,7 +19,7 @@ tracker = AlbertTracker()
 
 from datetime import datetime, timezone
 import random
-from app.signals import detect_interest_level, detect_personality_type, get_approach_instructions
+from app.signals import detect_objection_type
 
 async def process_conversation(phone: str, message: str, conversation_id: str = "", message_id: str = "", last_message_ts: float = 0, pending_message_ids: list[str] | None = None):
     """Main conversation engine logic."""
@@ -558,21 +558,12 @@ async def build_enhanced_context(session: dict, lead_data: dict, message: str, k
     overall_score = bant_scores.get("overall_score", 0)
     recommended_action = bant_scores.get("recommended_action", "continue_discovery")
 
-    # 1. Detect Buyer Signals and Personality
-    interest = detect_interest_level(message)
-    user_history = [m["content"] for m in session.get("history", []) if m["role"] == "user"]
-    personality = detect_personality_type(user_history)
-    approach = get_approach_instructions(interest, personality)
-
-    # 2. Base Instruction (BANT + Action)
+    # 1. Base Instruction (BANT + Action)
     instruction = f"\n\nCURRENT BANT STATUS: Score {overall_score}/10. Action: {recommended_action}.\n"
     if recommended_action == "continue_discovery" or overall_score < 7:
         instruction += "INSTRUCTION: Maintain Chat Mode. Use SPIN questions only if they flow naturally. Do NOT force discovery.\n"
     elif overall_score >= 7:
         instruction += "INSTRUCTION: Lead is qualified. Suggest a call with Louis when the moment feels natural. Suggest it as a logical next step to solve their problem.\n"
-    
-    # 3. Dynamic Approach Instruction
-    instruction += approach + "\n"
     
     # 4. Inject Form context (Issue 9)
     form_keys = ["name", "email", "company", "message", "lead_source", "website", "company_size", "role"]

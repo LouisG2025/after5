@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import sys
 from fastapi import FastAPI, Request
@@ -21,6 +22,7 @@ logging.basicConfig(
 )
 from app.conversation_library import load_conversation_library
 from app.redis_client import redis_client
+from app.scheduler import run_scheduler
 
 logger = logging.getLogger(__name__)
 logger.info("Application starting...")
@@ -36,6 +38,8 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 async def startup():
     logger.info("Running startup tasks...")
     await load_conversation_library(redis_client.redis)
+    # Start the follow-up scheduler in the background
+    asyncio.create_task(run_scheduler())
 
 # CORS — restrict to known domains
 cors_origins = [o.strip() for o in settings.CORS_ALLOWED_ORIGINS.split(",") if o.strip()]
