@@ -137,7 +137,7 @@ async def send_initial_outreach(name_raw: str, phone_raw: str, company_raw: str,
                 logger.warning("[Outreach] ⚠️ Template send failed. Falling back to raw text.")
             
             # 5. Fallback: Human-like delivery — bypass chunking for template
-            chunks = chunk_message(first_message_content, is_template=True)
+            chunks = chunk_message(first_message_content, is_template=False)
 
             # Note: typing indicator and delays are handled INSIDE send_chunked_messages.
             delivered = await send_chunked_messages(sender_phone, chunks, interruptible=False)
@@ -270,7 +270,7 @@ async def send_returning_outreach(name_raw: str, phone: str, company_raw: str, f
             await tracker.update_state(lead_id, "Discovery")
 
         # 7. Send the welcome-back message
-        chunks = chunk_message(welcome_msg, is_template=True)
+        chunks = chunk_message(welcome_msg, is_template=False)
         delivered = await send_chunked_messages(phone, chunks, interruptible=False)
         if lead_id:
             for chunk_text in (delivered or []):
@@ -296,7 +296,7 @@ async def send_follow_up_message(lead_id: str, name: str, phone: str):
         
         # 2. Human-like delivery — bypass chunking for follow-up template
         from app.chunker import chunk_message
-        chunks = chunk_message(follow_up_content, is_template=True)
+        chunks = chunk_message(follow_up_content, is_template=False)
         delivered = await send_chunked_messages(phone, chunks, interruptible=False)
 
         # 3. Log to Supabase only what actually delivered to mobile WhatsApp
