@@ -422,15 +422,10 @@ async def webhook(request: Request, background_tasks: BackgroundTasks):
 
 
 async def _snappy_blue_tick(phone: str, message_id: str):
-    """Quick blue-tick when a new message arrives while Albert is mid-reply.
-    Waits ~1.5s (so it doesn't feel instant) then marks the message read.
-    The full reply cycle still runs separately and re-marks via the normal
-    pending_msg_ids batch — these calls are idempotent so duplicate reads
-    are harmless.
-    """
+    """Quick blue-tick when a new message arrives while Albert is mid-reply."""
     try:
         import asyncio as _asyncio
-        await _asyncio.sleep(1.5)
+        await _asyncio.sleep(0.5)
         from app.baileys_client import mark_batch_as_read
         await mark_batch_as_read(phone, [message_id])
         logger.info(f"[Snappy glance] Blue-ticked {message_id} for {phone} mid-reply")

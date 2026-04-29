@@ -137,7 +137,7 @@ async def _clear_typing(to: str) -> None:
 async def _poll_interruptible(
     to: str,
     total_seconds: float,
-    step: float = 0.5,
+    step: float = 0.3,
     expect_typing_indicator_on: bool = True,
     message_id: str = "",
 ) -> str:
@@ -165,33 +165,8 @@ async def _poll_interruptible(
 
 
 async def _compute_pause_budget(to: str) -> float:
-    """How long to wait for the lead to finish typing, scaled to context.
-    A real person's wait isn't fixed — they wait longer if the conversation
-    has been substantive, shorter if it's been a quick back-and-forth.
-
-    - Last lead message ≤ 30 chars  → 6s   (snappy chat, don't stall)
-    - 30 < length ≤ 120 chars       → 10s  (normal)
-    - 120 < length ≤ 250 chars      → 13s
-    - > 250 chars                   → 15s  (cap — was 20s, too long)
-
-    No prior message info available → 8s default.
-    """
-    from app.redis_client import redis_client
-    try:
-        last = await redis_client.redis.get(f"last_lead_msg:{to}")
-        if not last:
-            return 8.0
-        length = len(last.decode('utf-8') if isinstance(last, bytes) else last)
-    except Exception:
-        return 8.0
-
-    if length <= 30:
-        return 6.0
-    if length <= 120:
-        return 10.0
-    if length <= 250:
-        return 13.0
-    return 15.0
+    """How long to wait for the lead to finish typing. Minimal waits for fast responses."""
+    return 3.0  # Quick 3 second max wait
 
 
 async def _handle_pause(to: str, max_wait: float | None = None) -> str:
@@ -213,8 +188,8 @@ async def _handle_pause(to: str, max_wait: float | None = None) -> str:
     logger.info(f"[Baileys] Paused for {to} — lead is typing, waiting up to {max_wait:.1f}s")
 
     waited = 0.0
-    step = 0.5
-    silence_threshold = 4.0  # resume if they go quiet for 4s (was 5s — felt long)
+    step = 0.3
+    silence_threshold = 1.5  # resume quickly when they stop typing
 
     while waited < max_wait:
         await asyncio.sleep(step)

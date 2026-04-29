@@ -315,94 +315,47 @@ def aggregate_messages(buffer: list[str]) -> str:
 
 
 def calculate_blue_tick_delay(last_lead_message_time: float, current_time: float) -> float:
-    """Delay before marking the lead's message as read.
-    - ~2s if actively chatting (last message < 60s ago)
-    - ~4-5s if returning after a gap
-
-    When multiple messages arrive during aggregation, blue-tick them all in
-    a single batch when this fires.
-    """
+    """Delay before marking the lead's message as read. Minimal delay."""
     gap = current_time - last_lead_message_time
 
     if gap < 60:
-        return random.uniform(1.5, 2.5)
-    return random.uniform(3.5, 5.0)
+        return random.uniform(0.3, 0.6)
+    return random.uniform(0.5, 1.0)
 
 
 def calculate_reading_delay(incoming_text: str) -> float:
-    """How long Albert 'reads' the incoming message before replying.
-    Tuned to feel like a real person on their phone — not instant, not lazy.
-    - One-word ack ('yes', 'ok'):     1.5-2.5s — they had to look at the screen
-    - Short msg (< 40 chars):          ~30ms/char, min 2.0s
-    - Normal msg:                       ~32ms/char, min 2.5s
-    - Long thoughtful msg (200+):       ~35ms/char, min 3.0s, capped at 8s
-    - Questions get a small ponder      +0.5s
-
-    The LLM call runs in parallel with this delay so generation overlaps;
-    this is purely the cosmetic "reading" time the lead perceives.
-    """
+    """Minimal reading delay - just enough to not seem instant."""
     text = (incoming_text or "").strip()
     char_count = len(text)
 
-    # Ultra-short ack — still takes a couple of seconds for a human to glance,
-    # process, and start replying. NOT instant.
-    if char_count <= 8:
-        return random.uniform(1.5, 2.5)
-
-    if char_count < 40:
-        rate = 0.030
-        floor = 2.0
-    elif char_count < 200:
-        rate = 0.032
-        floor = 2.5
+    if char_count <= 20:
+        return random.uniform(0.3, 0.5)
+    elif char_count < 100:
+        return random.uniform(0.5, 0.8)
     else:
-        rate = 0.035
-        floor = 3.0
-
-    base = char_count * rate
-    if "?" in text:
-        base += 0.5  # ponder bonus when they ask something
-
-    return max(floor, min(8.0, base + random.uniform(-0.3, 0.3)))
+        return random.uniform(0.8, 1.2)
 
 
 def calculate_typing_delay(text: str, is_first_chunk: bool = True) -> float:
-    """Cosmetic typing duration. Tuned to real phone-typing speed:
-    ~20 chars/sec is fast-but-human (most people are 15-25 cps on a phone).
-
-    - Very short reply (< 20 chars):  min 1.5s — even 'yeah cool' takes time
-                                      to thumb-type and hit send
-    - First chunk:                    min 2.0s, capped at 7s
-    - Follow-on chunk:                min 1.2s, capped at 3.5s
-                                      (faster than first because the thought
-                                      is already there, but not instant)
-    """
+    """Minimal typing delay - quick responses."""
     char_count = len(text)
-    base = char_count * 0.050  # ~20 chars/sec, realistic phone typing
 
-    if char_count < 20:
-        floor = 1.5 if is_first_chunk else 1.0
-        cap = 2.5
-    elif is_first_chunk:
-        floor = 2.0
-        cap = 7.0
+    if char_count < 30:
+        return random.uniform(0.4, 0.7)
+    elif char_count < 80:
+        return random.uniform(0.6, 1.0)
     else:
-        floor = 1.2
-        cap = 3.5
-
-    return max(floor, min(cap, base + random.uniform(-0.3, 0.3)))
+        return random.uniform(0.8, 1.5)
 
 
 def calculate_think_pause() -> float:
-    """Pause between reading and typing — that beat where you decide what to
-    say before your thumbs move. First chunk only."""
-    return random.uniform(0.7, 1.2)
+    """Minimal think pause."""
+    return random.uniform(0.1, 0.3)
 
 
 def calculate_review_pause() -> float:
-    """Pause between typing and send — glancing at what you wrote before
-    hitting send. First chunk only."""
-    return random.uniform(0.3, 0.6)
+    """Minimal review pause."""
+    return random.uniform(0.05, 0.15)
 
 
 def calculate_full_sequence(incoming_text: str, outgoing_text: str, last_lead_message_time: float, current_time: float) -> dict:

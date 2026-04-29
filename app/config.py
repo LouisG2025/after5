@@ -59,9 +59,9 @@ class Settings(BaseSettings):
 
     # App
     DEBUG: bool = False
-    # Input buffer settings (Brief spec: 5s silence window, 25s hard max)
-    INPUT_BUFFER_SECONDS: float = 5.0
-    INPUT_BUFFER_MAX_SECONDS: float = 25.0
+    # Input buffer settings (minimal wait for fast responses)
+    INPUT_BUFFER_SECONDS: float = 1.5
+    INPUT_BUFFER_MAX_SECONDS: float = 8.0
     MAX_INTERRUPT_RETRIES: int = 2
 
     # Low content spam threshold (Master Prompt Fix 4)
@@ -81,7 +81,7 @@ class Settings(BaseSettings):
     CORS_ALLOWED_ORIGINS: str = os.getenv("CORS_ALLOWED_ORIGINS", "http://localhost:3000")
 
     # Human-like Behavior
-    MARK_AS_READ_DELAY: float = 2.0
+    MARK_AS_READ_DELAY: float = 0.5
     SHOW_TYPING_INDICATOR: bool = True
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
