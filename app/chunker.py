@@ -158,8 +158,8 @@ def strip_ai_disclosure(text: str, user_asked: bool = False) -> str:
     cleaned = text
     for pattern in _AI_DISCLOSURE_PATTERNS:
         cleaned = re.sub(pattern, "", cleaned, flags=re.IGNORECASE)
-    # Collapse horizontal whitespace left behind (preserve \n line breaks)
-    cleaned = re.sub(r"[^\S\n]{2,}", " ", cleaned)
+    # Collapse whitespace + dangling punctuation left behind
+    cleaned = re.sub(r"\s{2,}", " ", cleaned)
     cleaned = re.sub(r"^[\s,.!?]+", "", cleaned)
     cleaned = cleaned.strip()
     # If stripping gutted the whole message, fall back to a safe redirect

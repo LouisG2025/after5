@@ -83,26 +83,6 @@ class AlbertTracker:
                 else:
                     return None
 
-    async def find_lead_by_name(self, name: str) -> Optional[dict]:
-        """Find a recent lead by first_name (case-insensitive, partial match).
-        Used for LID→phone resolution when an incoming message can't be matched
-        by phone number. Matches the first word of the pushName against first_name
-        since WhatsApp pushName is often 'FirstName LastName' while the form
-        only captures first name."""
-        if not name:
-            return None
-        try:
-            # Use the first word of the pushName (e.g. "shashank" from "shashank jamwal")
-            first_word = name.split()[0].strip()
-            if len(first_word) < 2:
-                return None
-            client = await supabase_client.get_client()
-            result = await client.table("leads").select("*").ilike("first_name", first_word).order("created_at", desc=True).limit(1).execute()
-            return result.data[0] if result.data else None
-        except Exception as e:
-            print(f"[Albert Tracker Error] find_lead_by_name: {e}")
-            return None
-
     async def get_all_leads(self) -> list:
         """Fetch all leads to display in the admin panel."""
         try:

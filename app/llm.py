@@ -232,7 +232,6 @@ class LLMClient:
         }
 
         found_objections = []
-        msg_lower = message.lower()
         for key, filename in objection_map.items():
             if key in msg_lower:
                 path = os.path.join(os.getcwd(), "prompts", "objections", filename)
