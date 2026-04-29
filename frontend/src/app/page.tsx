@@ -18,11 +18,15 @@ export default function Home() {
 
   return (
     <div className="flex h-full">
-      <aside className="w-80 shrink-0 bg-zinc-950">
+      <aside className={`w-full shrink-0 bg-zinc-950 md:w-80 ${selectedId ? "hidden md:block" : ""}`}>
         <ConversationList selectedId={selectedId} onSelect={setSelectedId} />
       </aside>
-      <main className="flex min-w-0 flex-1 flex-col bg-zinc-900">
-        {selectedId ? <ChatView leadId={selectedId} /> : <EmptyState onStartTest={() => setResetOpen(true)} />}
+      <main className={`flex min-w-0 flex-1 flex-col bg-zinc-900 ${selectedId ? "" : "hidden md:flex"}`}>
+        {selectedId ? (
+          <ChatView leadId={selectedId} onBack={() => setSelectedId(null)} />
+        ) : (
+          <EmptyState onStartTest={() => setResetOpen(true)} />
+        )}
       </main>
       <ResetModal open={resetOpen} onClose={() => setResetOpen(false)} />
     </div>

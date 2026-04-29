@@ -91,15 +91,24 @@ async def send_initial_outreach(name_raw: str, phone_raw: str, company_raw: str,
             }
         ]
         
-        if is_sim:
-            logger.info("[Outreach] 🧪 Simulation: Skipping template, using raw text fallback.")
+        # Skip Cloud API template when using Baileys — Baileys sends formatted
+        # raw text with proper line breaks; Cloud API templates have their own
+        # rigid formatting that strips our \n\n paragraph spacing.
+        from app.config import settings as _settings
+        use_baileys = (_settings.MESSAGING_PROVIDER or "baileys").lower() == "baileys"
+
+        if is_sim or use_baileys:
+            if is_sim:
+                logger.info("[Outreach] 🧪 Simulation: Skipping template, using raw text fallback.")
+            else:
+                logger.info("[Outreach] 📱 Baileys active: using formatted raw text instead of Cloud API template.")
             template_res = None
         else:
             logger.info("[Outreach] 🚀 Attempting template outreach for %s (%s)", name, sender_phone)
             template_res = await send_template_message(
-                sender_phone, 
-                template_name, 
-                language_code="en_GB", 
+                sender_phone,
+                template_name,
+                language_code="en_GB",
                 components=components
             )
         

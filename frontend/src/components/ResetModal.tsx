@@ -23,12 +23,13 @@ export default function ResetModal({
   const [firstName, setFirstName] = useState(defaultFirstName);
   const [company, setCompany] = useState(defaultCompany);
   const [message, setMessage] = useState(defaultMessage);
-  const [sendOutreach, setSendOutreach] = useState(true);
+  const [sendOutreach, setSendOutreach] = useState(false);
   const [running, setRunning] = useState(false);
   const [result, setResult] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const apiBase = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+  const apiKey = process.env.NEXT_PUBLIC_API_KEY || "";
 
   if (!open) return null;
 
@@ -39,7 +40,7 @@ export default function ResetModal({
     try {
       const res = await fetch(`${apiBase}/debug/reset`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...(apiKey && { "X-API-Key": apiKey }) },
         body: JSON.stringify({
           phone,
           first_name: firstName,

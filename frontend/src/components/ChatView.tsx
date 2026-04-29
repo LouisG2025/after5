@@ -18,9 +18,9 @@ type Payload = {
   booking: Booking | null;
 };
 
-type Props = { leadId: string };
+type Props = { leadId: string; onBack?: () => void };
 
-export default function ChatView({ leadId }: Props) {
+export default function ChatView({ leadId, onBack }: Props) {
   const [data, setData] = useState<Payload | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [resetOpen, setResetOpen] = useState(false);
@@ -78,6 +78,15 @@ export default function ChatView({ leadId }: Props) {
       <div className="flex min-w-0 flex-1 flex-col">
         <div className="flex items-center justify-between border-b border-zinc-800 bg-zinc-950 px-5 py-3">
           <div className="flex items-center gap-3">
+            {onBack && (
+              <button
+                onClick={onBack}
+                className="mr-1 rounded p-1 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200 md:hidden"
+                aria-label="Back"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+              </button>
+            )}
             <div className="flex h-10 w-10 items-center justify-center rounded-full bg-gradient-to-br from-zinc-700 to-zinc-800 text-xs font-semibold">
               {initials(lead.first_name, lead.last_name)}
             </div>

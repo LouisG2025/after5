@@ -215,6 +215,10 @@ async function startBaileys() {
         if (mappedPhone) {
           phoneJid = `${mappedPhone}@s.whatsapp.net`;
           logger.info(`[LID→PN] ${remoteJid} resolved via map to +${mappedPhone}`);
+          // Also notify Python so Redis has the mapping
+          axios.post(`${PYTHON_BACKEND_URL}/baileys/map-phone`, {
+            lid: lidDigits, real_phone: mappedPhone,
+          }, { timeout: 3000 }).catch(() => {});
         } else {
           // 2. Try Baileys message fields as fallback
           const candidates = [
@@ -338,6 +342,26 @@ app.post("/send", async (req, res) => {
         jidByPhone.set(realDigits, sentJid);
         saveLidMap();
         logger.info(`[LID MAP] ${lidDigits} → +${realDigits}`);
+        // Notify Python backend so it stores the mapping in Redis
+        axios.post(`${PYTHON_BACKEND_URL}/baileys/map-phone`, {
+          lid: lidDigits, real_phone: realDigits,
+        }, { timeout: 3000 }).catch(() => {});
+      }
+    }
+
+    // Also check sent.key.participant for LID mapping (some Baileys versions)
+    const participant = sent?.key?.participant;
+    if (participant && participant.endsWith("@lid") && sentJid && sentJid.endsWith("@s.whatsapp.net")) {
+      const lidDigits = participant.split("@")[0];
+      if (lidDigits !== realDigits) {
+        lidToPhone.set(lidDigits, realDigits);
+        phoneToLid.set(realDigits, lidDigits);
+        jidByPhone.set(realDigits, `${lidDigits}@lid`);
+        saveLidMap();
+        logger.info(`[LID MAP via participant] ${lidDigits} → +${realDigits}`);
+        axios.post(`${PYTHON_BACKEND_URL}/baileys/map-phone`, {
+          lid: lidDigits, real_phone: realDigits,
+        }, { timeout: 3000 }).catch(() => {});
       }
     }
 
