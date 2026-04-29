@@ -239,10 +239,10 @@ async def send_chunked_messages(
     if not interruptible:
         # Fast path with no interrupt checks (used for hardcoded templates)
         for chunk in chunks:
-            formatted = format_message(chunk)
-            result = await send_message(to, formatted)
+            # Templates already have formatting, send as-is
+            result = await send_message(to, chunk)
             if result is not None:
-                sent.append(formatted)
+                sent.append(chunk)
         return sent
 
     current_time = _time.time()
