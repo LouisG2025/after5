@@ -307,6 +307,16 @@ async def send_chunked_messages(
         if seq["blue_tick_delay"] > 0:
             if await _interruptible_sleep(seq["blue_tick_delay"]):
                 return sent
+            # Grab any NEW message IDs that arrived during processing
+            # so ALL messages flip blue together, not just the initial batch
+            pending_key = f"pending_msg_ids:{to}"
+            fresh_raw = await redis_client.redis.lrange(pending_key, 0, -1)
+            if fresh_raw:
+                fresh_ids = [(m.decode('utf-8') if isinstance(m, bytes) else m) for m in fresh_raw]
+                await redis_client.redis.delete(pending_key)
+                for fid in fresh_ids:
+                    if fid not in ids_to_read:
+                        ids_to_read.append(fid)
             if ids_to_read:
                 await mark_batch_as_read(to, ids_to_read)
                 logger.info(f"[timing] {to} blue-ticked {len(ids_to_read)} msg(s) at +{round(_time.time() - t_start, 2)}s")
@@ -330,7 +340,20 @@ async def send_chunked_messages(
         if await _interruptible_sleep(seq["review_pause"]):
             return sent
 
-        # 6. Send the bubble. Only mark as 'sent' if Baileys returns 200,
+        # 6. Final blue-tick check: right before sending the FIRST reply,
+        # catch any messages that arrived during LLM generation. This ensures
+        # ALL user messages are blue when Albert's reply appears — matching
+        # native WhatsApp behavior where replying implies you read everything.
+        if i == 0:
+            pending_key = f"pending_msg_ids:{to}"
+            fresh_raw = await redis_client.redis.lrange(pending_key, 0, -1)
+            if fresh_raw:
+                fresh_ids = [(m.decode('utf-8') if isinstance(m, bytes) else m) for m in fresh_raw]
+                await redis_client.redis.delete(pending_key)
+                await mark_batch_as_read(to, fresh_ids)
+                logger.info(f"[timing] {to} final blue-tick: {len(fresh_ids)} msg(s) before reply")
+
+        # 7. Send the bubble. Only mark as 'sent' if Baileys returns 200,
         # so the dashboard log stays in sync with what mobile WhatsApp got.
         formatted = format_message(chunk, last_user_message=incoming_text)
         result = await send_message(to, formatted)

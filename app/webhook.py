@@ -125,6 +125,21 @@ async def baileys_incoming(msg: BaileysIncoming, background_tasks: BackgroundTas
         await redis_client.redis.set(f"phone_to_lid:{real_phone}", msg.phone, ex=86400 * 30)
     else:
         real_phone = msg.phone
+        # LID not in Redis — try matching by pushName to find the real lead.
+        # This handles the case where outbound went to a real phone but the
+        # reply comes from an unresolvable @lid.
+        if msg.name:
+            from app.tracker import AlbertTracker
+            tracker = AlbertTracker()
+            existing = await tracker.find_lead_by_name(msg.name.strip())
+            if existing and existing.get("phone"):
+                lead_phone = existing["phone"].replace("whatsapp:+", "")
+                if lead_phone != msg.phone:
+                    real_phone = lead_phone
+                    # Store both directions so future messages resolve instantly
+                    await redis_client.redis.set(f"lid_map:{msg.phone}", real_phone, ex=86400 * 30)
+                    await redis_client.redis.set(f"phone_to_lid:{real_phone}", msg.phone, ex=86400 * 30)
+                    logger.info(f"[Baileys] LID {msg.phone} matched to {real_phone} via pushName '{msg.name}'")
 
     # Allowlist check — phone OR pushName must match (name covers @lid
     # accounts that can't be resolved to a real phone number).
@@ -531,8 +546,30 @@ async def _process_with_interrupt_protection(
         if pending_ids:
             await redis_client.redis.delete(pending_key)
 
-        # 3. Mark generation in progress
+        # 3. Mark generation in progress BEFORE the sleep so that any messages
+        # arriving during the delay will trigger snappy_blue_tick as a backup
         await redis_client.set_generating(phone)
+
+        # 2b. IMMEDIATE blue-tick: mark ALL pending messages as read NOW,
+        # before any interruptible delays. This ensures every message gets
+        # blue-ticked even if the processing cycle is interrupted later.
+        # The send sequence will skip its own blue-tick step (delay=0 is fine).
+        if pending_ids:
+            from app.baileys_client import mark_batch_as_read
+            await asyncio.sleep(1.5)  # Brief natural delay before reading
+
+            # Re-check for any messages that arrived during the sleep
+            # (they would have created a new pending_msg_ids list since we deleted the old one)
+            fresh_raw = await redis_client.redis.lrange(pending_key, 0, -1)
+            if fresh_raw:
+                for m in fresh_raw:
+                    mid = m.decode('utf-8') if isinstance(m, bytes) else m
+                    if mid not in pending_ids:
+                        pending_ids.append(mid)
+                await redis_client.redis.delete(pending_key)
+
+            await mark_batch_as_read(phone, pending_ids)
+            logger.info(f"[Blue-tick] Immediately ticked {len(pending_ids)} msg(s) for {phone}")
 
         # 4. Process via conversation engine
         await process_conversation(
