@@ -88,18 +88,28 @@ class RedisClient:
             return "error_batch"
 
     async def get_and_clear_buffer(self, phone: str) -> str:
-        """Returns all buffered messages joined correctly and clears the buffer."""
+        """Returns all buffered messages joined correctly and clears the buffer.
+        Uses a Lua script to make the read-and-delete atomic, preventing
+        messages from being lost between lrange and delete."""
         try:
             key = f"buffer:{phone}"
             first_key = f"buffer_first:{phone}"
             batch_key = f"buffer_batch:{phone}"
-            
-            messages = await self.redis.lrange(key, 0, -1)
-            await self.redis.delete(key, first_key, batch_key)
-            
+
+            # Atomic: read all items, delete keys, return items — no gap for
+            # a concurrent rpush to sneak in and then get wiped.
+            lua = """
+            local msgs = redis.call('lrange', KEYS[1], 0, -1)
+            if #msgs > 0 then
+                redis.call('del', KEYS[1], KEYS[2], KEYS[3])
+            end
+            return msgs
+            """
+            messages = await self.redis.eval(lua, 3, key, first_key, batch_key)
+
             if not messages:
                 return ""
-                
+
             texts = [m if isinstance(m, str) else m.decode() for m in messages]
             return "\n".join(texts)
         except Exception as e:

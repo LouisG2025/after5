@@ -458,18 +458,20 @@ async def _delayed_buffer_process(phone: str, batch_id: str, last_message_ts: fl
     process the buffer. If new message arrived, this timer dies silently.
     """
     await asyncio.sleep(settings.INPUT_BUFFER_SECONDS)
-    
+
     # Is this still the current batch?
     if not await redis_client.is_batch_current(phone, batch_id):
         return  # Newer message arrived, a newer timer will handle it
-    
+
     # Clean up any stuck generation flags
     await redis_client.check_and_clear_stale_generation(phone)
-    
-    # If LLM generation already in progress, don't start another
+
+    # If LLM generation already in progress, the post-generation sweep in
+    # _process_with_interrupt_protection will pick up these buffered messages.
     if await redis_client.is_generating(phone):
-        return  # The interrupt handler will pick up new messages
-    
+        logger.info(f"[Buffer] {phone} timer fired but generation active — sweep will catch it")
+        return
+
     combined = await redis_client.get_and_clear_buffer(phone)
     if combined:
         logger.info(f"Buffer ready for {phone}: {combined[:80]}...")
@@ -544,7 +546,26 @@ async def _process_with_interrupt_protection(
         # It recursively calls itself.
         
         await redis_client.clear_generating(phone)
-        
+
+        # POST-GENERATION SWEEP: pick up any messages that arrived while
+        # is_generating was True and whose delayed timers already returned
+        # silently.  Without this, those messages would be stranded in the
+        # buffer with no timer left to process them.
+        leftover = await redis_client.get_and_clear_buffer(phone)
+        if leftover:
+            logger.info(f"[Buffer sweep] Found leftover messages for {phone} after generation — processing")
+            # Pull any pending msg_ids so they get blue-ticked too
+            sweep_key = f"pending_msg_ids:{phone}"
+            sweep_raw = await redis_client.redis.lrange(sweep_key, 0, -1)
+            sweep_ids = [(m.decode('utf-8') if isinstance(m, bytes) else m) for m in sweep_raw]
+            if sweep_ids:
+                await redis_client.redis.delete(sweep_key)
+            last_id_val = await redis_client.redis.get(f"last_msg_id:{phone}")
+            sweep_msg_id = (last_id_val.decode('utf-8') if isinstance(last_id_val, bytes) else (last_id_val or ""))
+            asyncio.create_task(_process_with_interrupt_protection(
+                phone, leftover, last_message_ts=last_message_ts,
+            ))
+
     except Exception as e:
         logger.error(f"Processing error for {phone}: {e}", exc_info=True)
         await redis_client.clear_generating(phone)

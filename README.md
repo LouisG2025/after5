@@ -44,10 +44,21 @@ Check `.env.example` for the full list of required variables.
 
 ## Architecture Overview
 1.  **Webhook**: Incoming message is received (Baileys or Cloud API).
-2.  **Buffering**: Input is buffered in Redis to handle multiple messages.
+2.  **Buffering**: Input is buffered in Redis (5s silence window) to handle multiple messages.
 3.  **Processing**: Conversation engine is triggered after buffer timeout.
 4.  **LLM Call**: Context is built and OpenRouter is called.
 5.  **Chunking**: Response is split into multiple messages if needed.
-6.  **Delivery**: Messages are sent via Baileys/Cloud API with typing indicators.
+6.  **Delivery**: Messages are sent via Baileys/Cloud API with human-like timing (reading delay, typing indicator, review pause).
 7.  **BANT Extraction**: Qualification signals are extracted in the background.
 8.  **Logging**: Everything is saved to Supabase for persistent tracking.
+
+## Background Scheduler
+A built-in follow-up scheduler runs automatically when the app starts (no external cron needed):
+- Checks every hour for leads in Discovery/Qualification/Booking state who went quiet for 24+ hours.
+- Sends a single nudge message per lead.
+- Tracked in Redis to prevent duplicate follow-ups.
+- Code: `app/scheduler.py`, started in `main.py` via `asyncio.create_task(run_scheduler())`.
+
+## Demo Protection
+- **Message limit**: After 20 messages with no booking, Albert sends a graceful exit and closes the session.
+- **Phone cooldown**: If a phone number has already completed a full conversation (CLOSED/CONFIRMED), repeat form submissions are blocked.

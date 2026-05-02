@@ -60,8 +60,8 @@ class Settings(BaseSettings):
     # App
     DEBUG: bool = False
     # Input buffer settings (minimal wait for fast responses)
-    INPUT_BUFFER_SECONDS: float = 1.5
-    INPUT_BUFFER_MAX_SECONDS: float = 8.0
+    INPUT_BUFFER_SECONDS: float = 5.0
+    INPUT_BUFFER_MAX_SECONDS: float = 25.0
     MAX_INTERRUPT_RETRIES: int = 2
 
     # Low content spam threshold (Master Prompt Fix 4)

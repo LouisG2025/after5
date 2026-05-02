@@ -326,6 +326,8 @@ class LLMClient:
         # if we're approaching the limit. 1 token ≈ 4 chars is a safe estimate.
         MAX_TOKENS = 100_000  # safe limit for Claude Sonnet / GPT-4o
         system_tokens = len(system_prompt) // 4
+        if system_tokens > 6000:
+            print(f"[LLM] ⚠️ System prompt is {system_tokens} est. tokens — consider slimming", flush=True)
         message_tokens = len(message) // 4
         available_for_history = MAX_TOKENS - system_tokens - message_tokens - 500  # 500 buffer
 

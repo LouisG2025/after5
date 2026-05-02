@@ -181,10 +181,10 @@ async def process_conversation(phone: str, message: str, conversation_id: str = 
 
         # ... (Step 4 is moved up, so we'll just skip it below) ...
 
-        # Step 4.5: Demo safety limit — if 50+ messages with no booking, graceful exit
+        # Step 4.5: Demo safety limit — if 20+ messages with no booking, graceful exit
         turn_count = session.get("turn_count", 0)
-        if turn_count >= 50 and session.get("state") not in [ConversationState.CONFIRMED, ConversationState.CLOSED]:
-            logger.info("[Conversation] Safety limit hit (50+ turns) for %s. Sending graceful exit.", phone)
+        if turn_count >= 20 and session.get("state") not in [ConversationState.CONFIRMED, ConversationState.CLOSED]:
+            logger.info("[Conversation] Safety limit hit (20+ turns) for %s. Sending graceful exit.", phone)
             exit_msg = "Hey, I think we've covered a lot here. If you want to take the next step, the best thing is to grab a time with Louis. Otherwise, no stress at all, you know where to find us"
             await send_message(phone, exit_msg)
             session["state"] = ConversationState.CLOSED

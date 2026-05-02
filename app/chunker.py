@@ -96,6 +96,27 @@ def chunk_message(text: str, is_template: bool = False) -> list[str]:
     # Post-processor: merge short trailing continuations back into prior bubble
     chunks = _merge_continuations(chunks)
 
+    # Post-processor: split any single chunk that's still too long (4+ sentences
+    # or >250 chars) into separate bubbles at sentence boundaries. This is the
+    # mechanical enforcement that catches long-winded LLM output.
+    expanded = []
+    for chunk in chunks:
+        # Don't split URLs or very short chunks
+        if re.search(r"https?://", chunk) or len(chunk) <= 250:
+            expanded.append(chunk)
+            continue
+        # Count sentences
+        sents = [s.strip() for s in re.split(r'(?<=[.!?])\s+', chunk) if s.strip()]
+        if len(sents) <= 2:
+            expanded.append(chunk)
+            continue
+        # Split: first 2 sentences in one bubble, rest in another
+        expanded.append(" ".join(sents[:2]))
+        remainder = " ".join(sents[2:])
+        if remainder:
+            expanded.append(remainder)
+    chunks = expanded
+
     # Final cleanup and hard cap
     chunks = [c.strip() for c in chunks if c.strip()]
     if len(chunks) > 3:
@@ -315,7 +336,7 @@ def aggregate_messages(buffer: list[str]) -> str:
 
 
 def calculate_blue_tick_delay(last_lead_message_time: float, current_time: float) -> float:
-    """Delay before marking the lead's message as read. Minimal delay."""
+    """Delay before marking the lead's message as read. Quick glance."""
     gap = current_time - last_lead_message_time
 
     if gap < 60:
@@ -324,38 +345,36 @@ def calculate_blue_tick_delay(last_lead_message_time: float, current_time: float
 
 
 def calculate_reading_delay(incoming_text: str) -> float:
-    """Minimal reading delay - just enough to not seem instant."""
+    """Reading delay scaled to message length.
+    0.03s per character, clamped to 2-8s range.
+    Reading is fast — people watch the typing indicator, not the blue tick."""
     text = (incoming_text or "").strip()
     char_count = len(text)
-
-    if char_count <= 20:
-        return random.uniform(0.3, 0.5)
-    elif char_count < 100:
-        return random.uniform(0.5, 0.8)
-    else:
-        return random.uniform(0.8, 1.2)
+    base = char_count * 0.03
+    # Add slight jitter (±15%) for natural feel
+    jitter = random.uniform(0.85, 1.15)
+    return max(2.0, min(8.0, base * jitter))
 
 
 def calculate_typing_delay(text: str, is_first_chunk: bool = True) -> float:
-    """Minimal typing delay - quick responses."""
+    """Typing delay scaled to reply length.
+    0.12s per character, minimum 2s, no hard cap.
+    Typing is what people watch — this is the most important delay."""
     char_count = len(text)
-
-    if char_count < 30:
-        return random.uniform(0.4, 0.7)
-    elif char_count < 80:
-        return random.uniform(0.6, 1.0)
-    else:
-        return random.uniform(0.8, 1.5)
+    base = char_count * 0.12
+    # Add slight jitter (±15%) for natural feel
+    jitter = random.uniform(0.85, 1.15)
+    return max(2.0, base * jitter)
 
 
 def calculate_think_pause() -> float:
-    """Minimal think pause."""
-    return random.uniform(0.1, 0.3)
+    """Pause between reading and typing — the 'thinking' gap."""
+    return random.uniform(0.8, 1.2)
 
 
 def calculate_review_pause() -> float:
-    """Minimal review pause."""
-    return random.uniform(0.05, 0.15)
+    """Final pause before sending — 'reviewing' the message."""
+    return random.uniform(0.3, 0.7)
 
 
 def calculate_full_sequence(incoming_text: str, outgoing_text: str, last_lead_message_time: float, current_time: float) -> dict:
