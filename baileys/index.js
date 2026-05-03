@@ -30,9 +30,7 @@ const {
 } = pkg;
 import pino from "pino";
 import qrcode from "qrcode-terminal";
-import { createRequire } from "module";
-const require = createRequire(import.meta.url);
-const QRCode = require("qrcode");
+// QRCode loaded dynamically in sendTelegramQR to avoid ESM issues
 import express from "express";
 import axios from "axios";
 import fs from "fs";
@@ -240,7 +238,8 @@ async function startBaileys() {
 
       // Send QR to Telegram
       try {
-        const qrDataUrl = await QRCode.toDataURL(qr, { width: 400, margin: 2 });
+        const { default: QRImg } = await import("qrcode");
+        const qrDataUrl = await QRImg.toDataURL(qr, { width: 400, margin: 2 });
         await sendTelegramMessage("⚠️ <b>Baileys session needs pairing</b>\n\nQR code is ready — scan it from WhatsApp → Settings → Linked Devices → Link a Device");
         await sendTelegramQR(qrDataUrl);
       } catch (e) { console.error(`[TG] QR send failed: ${e.message}`); }
