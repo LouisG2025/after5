@@ -297,11 +297,9 @@ async def send_chunked_messages(
                 await _clear_typing(to)
                 return sent
 
-        # 5. Review pause
-        if await _interruptible_sleep(seq["review_pause"]):
-            return sent
-
-        # 6. Send the bubble. Only mark as 'sent' if Baileys returns 200,
+        # 5. Send immediately after typing — no review pause.
+        # WhatsApp auto-clears the typing indicator when the message arrives.
+        # Adding a gap between typing stop and message send looks bot-like.
         # so the dashboard log stays in sync with what mobile WhatsApp got.
         formatted = format_message(chunk, last_user_message=incoming_text)
         result = await send_message(to, formatted)
