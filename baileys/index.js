@@ -56,15 +56,25 @@ async function sendTelegramQR(qrDataUrl) {
   const tmpPath = "/tmp/baileys_qr.png";
   fs.writeFileSync(tmpPath, buffer);
 
+  // Send QR image via Telegram's base64 method (no form-data needed)
   for (const chatId of TG_CHAT_IDS) {
     try {
-      const FormData = (await import("form-data")).default;
-      const form = new FormData();
-      form.append("chat_id", chatId);
-      form.append("caption", "📱 Scan this QR code in WhatsApp → Settings → Linked Devices → Link a Device");
-      form.append("photo", fs.createReadStream(tmpPath));
-      await axios.post(`https://api.telegram.org/bot${TG_BOT_TOKEN}/sendPhoto`, form, {
-        headers: form.getHeaders(),
+      // Read the file and send as multipart using axios
+      const fileData = fs.readFileSync(tmpPath);
+      const boundary = "----TelegramQR" + Date.now();
+      const caption = "📱 Scan this QR code in WhatsApp → Settings → Linked Devices → Link a Device";
+
+      const body = Buffer.concat([
+        Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="chat_id"\r\n\r\n${chatId}\r\n`),
+        Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="caption"\r\n\r\n${caption}\r\n`),
+        Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="photo"; filename="qr.png"\r\nContent-Type: image/png\r\n\r\n`),
+        fileData,
+        Buffer.from(`\r\n--${boundary}--\r\n`),
+      ]);
+
+      await axios.post(`https://api.telegram.org/bot${TG_BOT_TOKEN}/sendPhoto`, body, {
+        headers: { "Content-Type": `multipart/form-data; boundary=${boundary}` },
+        maxContentLength: Infinity,
       });
     } catch (e) { console.error(`[TG] Failed to send QR to ${chatId}: ${e.message}`); }
   }
