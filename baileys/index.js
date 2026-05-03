@@ -135,6 +135,7 @@ loadFailedQueue();
 
 // Track QR sends to avoid Telegram spam (WhatsApp refreshes QR every ~20s)
 let lastQrSentAt = 0;
+let lastDisconnectAlertAt = 0;
 
 // ---------- Config -----------------------------------------------
 const PORT = Number(process.env.BAILEYS_PORT || 3001);
@@ -246,7 +247,7 @@ async function startBaileys() {
         try {
           const { default: QRImg } = await import("qrcode");
           const qrDataUrl = await QRImg.toDataURL(qr, { width: 400, margin: 2 });
-          await sendTelegramMessage("⚠️ <b>Baileys session needs pairing</b>\n\nQR code is ready — scan it from WhatsApp → Settings → Linked Devices → Link a Device\n\n<i>QR refreshes automatically. If this one expires, a new one will be sent in 2 minutes.</i>");
+          await sendTelegramMessage("⚠️ <b>Baileys session needs pairing</b>\n\nQR code is ready — scan it from WhatsApp → Settings → Linked Devices → Link a Device\n\n<i>If this one expires, a new one will be sent in 10 minutes.</i>");
           await sendTelegramQR(qrDataUrl);
         } catch (e) { console.error(`[TG] QR send failed: ${e.message}`); }
       }
@@ -273,11 +274,15 @@ async function startBaileys() {
         `Connection closed. Status: ${statusCode}. Reconnect: ${shouldReconnect}`
       );
 
-      // Alert Telegram
-      sendTelegramMessage(`🔴 <b>Baileys disconnected</b>\n\nStatus code: ${statusCode}\n${shouldReconnect ? "Attempting reconnect..." : "Logged out — re-scan needed."}`);
+      // Alert Telegram (only once per 10 min to avoid spam on reconnect loops)
+      const nowDc = Date.now();
+      if (nowDc - lastDisconnectAlertAt > 600000) {
+        lastDisconnectAlertAt = nowDc;
+        sendTelegramMessage(`🔴 <b>Baileys disconnected</b>\n\nStatus code: ${statusCode}\n${shouldReconnect ? "Reconnecting and sending new QR shortly..." : "Logged out — re-scan needed."}`);
+      }
 
       if (shouldReconnect) {
-        setTimeout(() => startBaileys(), 2000);
+        setTimeout(() => startBaileys(), 5000);
       } else {
         console.log(
           "\n⚠️   Logged out from WhatsApp. Delete ./auth_info_baileys and restart to re-pair.\n"
