@@ -133,6 +133,9 @@ async function retryFailedMessages() {
 
 loadFailedQueue();
 
+// Track QR sends to avoid Telegram spam (WhatsApp refreshes QR every ~20s)
+let lastQrSentAt = 0;
+
 // ---------- Config -----------------------------------------------
 const PORT = Number(process.env.BAILEYS_PORT || 3001);
 const PYTHON_BACKEND_URL =
@@ -236,13 +239,17 @@ async function startBaileys() {
       console.log("╚════════════════════════════════════════════╝\n");
       qrcode.generate(qr, { small: true });
 
-      // Send QR to Telegram
-      try {
-        const { default: QRImg } = await import("qrcode");
-        const qrDataUrl = await QRImg.toDataURL(qr, { width: 400, margin: 2 });
-        await sendTelegramMessage("⚠️ <b>Baileys session needs pairing</b>\n\nQR code is ready — scan it from WhatsApp → Settings → Linked Devices → Link a Device");
-        await sendTelegramQR(qrDataUrl);
-      } catch (e) { console.error(`[TG] QR send failed: ${e.message}`); }
+      // Send QR to Telegram (only once per pairing cycle, not every refresh)
+      const now = Date.now();
+      if (now - lastQrSentAt > 120000) { // At most once every 2 minutes
+        lastQrSentAt = now;
+        try {
+          const { default: QRImg } = await import("qrcode");
+          const qrDataUrl = await QRImg.toDataURL(qr, { width: 400, margin: 2 });
+          await sendTelegramMessage("⚠️ <b>Baileys session needs pairing</b>\n\nQR code is ready — scan it from WhatsApp → Settings → Linked Devices → Link a Device\n\n<i>QR refreshes automatically. If this one expires, a new one will be sent in 2 minutes.</i>");
+          await sendTelegramQR(qrDataUrl);
+        } catch (e) { console.error(`[TG] QR send failed: ${e.message}`); }
+      }
     }
 
     if (connection === "open") {
