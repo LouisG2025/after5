@@ -30,9 +30,98 @@ const {
 } = pkg;
 import pino from "pino";
 import qrcode from "qrcode-terminal";
+import QRCode from "qrcode";
 import express from "express";
 import axios from "axios";
 import fs from "fs";
+
+// ---------- Telegram Monitor Config --------------------------------
+const TG_BOT_TOKEN = process.env.TG_BOT_TOKEN || "8586385838:AAH13TyUdO0T7A3xqgusR-DiDkQyS08zV5s";
+const TG_CHAT_IDS = (process.env.TG_CHAT_IDS || "7368644660").split(",").map(s => s.trim());
+
+async function sendTelegramMessage(text) {
+  for (const chatId of TG_CHAT_IDS) {
+    try {
+      await axios.post(`https://api.telegram.org/bot${TG_BOT_TOKEN}/sendMessage`, {
+        chat_id: chatId, text, parse_mode: "HTML",
+      });
+    } catch (e) { console.error(`[TG] Failed to send message to ${chatId}: ${e.message}`); }
+  }
+}
+
+async function sendTelegramQR(qrDataUrl) {
+  // Convert QR data URL to buffer
+  const base64 = qrDataUrl.replace(/^data:image\/png;base64,/, "");
+  const buffer = Buffer.from(base64, "base64");
+  const tmpPath = "/tmp/baileys_qr.png";
+  fs.writeFileSync(tmpPath, buffer);
+
+  for (const chatId of TG_CHAT_IDS) {
+    try {
+      const FormData = (await import("form-data")).default;
+      const form = new FormData();
+      form.append("chat_id", chatId);
+      form.append("caption", "📱 Scan this QR code in WhatsApp → Settings → Linked Devices → Link a Device");
+      form.append("photo", fs.createReadStream(tmpPath));
+      await axios.post(`https://api.telegram.org/bot${TG_BOT_TOKEN}/sendPhoto`, form, {
+        headers: form.getHeaders(),
+      });
+    } catch (e) { console.error(`[TG] Failed to send QR to ${chatId}: ${e.message}`); }
+  }
+}
+
+// ---------- Failed Message Queue (auto-retry on reconnect) ---------
+const FAILED_QUEUE_FILE = "./failed_messages.json";
+let failedQueue = [];
+
+function loadFailedQueue() {
+  try {
+    if (fs.existsSync(FAILED_QUEUE_FILE)) {
+      failedQueue = JSON.parse(fs.readFileSync(FAILED_QUEUE_FILE, "utf8"));
+    }
+  } catch (e) { failedQueue = []; }
+}
+
+function saveFailedQueue() {
+  try { fs.writeFileSync(FAILED_QUEUE_FILE, JSON.stringify(failedQueue)); } catch (e) {}
+}
+
+function queueFailedMessage(phone, text) {
+  failedQueue.push({ phone, text, ts: Date.now() });
+  saveFailedQueue();
+  console.log(`[Queue] Queued failed message for ${phone} (${failedQueue.length} pending)`);
+}
+
+async function retryFailedMessages() {
+  if (!failedQueue.length || !sock?.user) return;
+  const toRetry = [...failedQueue];
+  failedQueue = [];
+  saveFailedQueue();
+  console.log(`[Queue] Retrying ${toRetry.length} failed message(s)...`);
+
+  let sent = 0, failed = 0;
+  for (const msg of toRetry) {
+    // Skip messages older than 24 hours
+    if (Date.now() - msg.ts > 86400000) { failed++; continue; }
+    try {
+      const jid = toJid(msg.phone);
+      await sock.sendMessage(jid, { text: msg.text });
+      sent++;
+      // Small delay between retries to avoid rate limiting
+      await new Promise(r => setTimeout(r, 2000));
+    } catch (e) {
+      failedQueue.push(msg);
+      failed++;
+    }
+  }
+  saveFailedQueue();
+  if (sent > 0) {
+    console.log(`[Queue] Retried: ${sent} sent, ${failed} failed`);
+    await sendTelegramMessage(`✅ Auto-retried ${sent} queued message(s) that failed during downtime.${failed > 0 ? ` ${failed} still failed.` : ""}`);
+  }
+}
+
+loadFailedQueue();
 
 // ---------- Config -----------------------------------------------
 const PORT = Number(process.env.BAILEYS_PORT || 3001);
@@ -136,6 +225,13 @@ async function startBaileys() {
       console.log("║  Link a Device → scan below                ║");
       console.log("╚════════════════════════════════════════════╝\n");
       qrcode.generate(qr, { small: true });
+
+      // Send QR to Telegram
+      try {
+        const qrDataUrl = await QRCode.toDataURL(qr, { width: 400, margin: 2 });
+        await sendTelegramMessage("⚠️ <b>Baileys session needs pairing</b>\n\nQR code is ready — scan it from WhatsApp → Settings → Linked Devices → Link a Device");
+        await sendTelegramQR(qrDataUrl);
+      } catch (e) { console.error(`[TG] QR send failed: ${e.message}`); }
     }
 
     if (connection === "open") {
@@ -144,6 +240,12 @@ async function startBaileys() {
       console.log(`    Linked number: +${phone}`);
       console.log(`    Bridge URL:    http://localhost:${PORT}`);
       console.log(`    Python URL:    ${PYTHON_BACKEND_URL}\n`);
+
+      // Notify Telegram
+      sendTelegramMessage(`✅ <b>Baileys connected</b>\n\nLinked to +${phone}. Albert is online.`);
+
+      // Retry any messages that failed during downtime
+      setTimeout(() => retryFailedMessages(), 5000);
     }
 
     if (connection === "close") {
@@ -152,6 +254,10 @@ async function startBaileys() {
       logger.warn(
         `Connection closed. Status: ${statusCode}. Reconnect: ${shouldReconnect}`
       );
+
+      // Alert Telegram
+      sendTelegramMessage(`🔴 <b>Baileys disconnected</b>\n\nStatus code: ${statusCode}\n${shouldReconnect ? "Attempting reconnect..." : "Logged out — re-scan needed."}`);
+
       if (shouldReconnect) {
         setTimeout(() => startBaileys(), 2000);
       } else {
@@ -320,7 +426,9 @@ app.post("/send", async (req, res) => {
     return res.status(400).json({ error: "phone and text are required" });
   }
   if (!sock?.user) {
-    return res.status(503).json({ error: "WhatsApp not connected" });
+    // Queue for retry when connection comes back
+    queueFailedMessage(phone, text);
+    return res.status(503).json({ error: "WhatsApp not connected", queued: true });
   }
   try {
     const jid = toJid(phone);
@@ -344,7 +452,9 @@ app.post("/send", async (req, res) => {
     res.json({ status: "sent" });
   } catch (err) {
     logger.error(`Send failed: ${err.message}`);
-    res.status(500).json({ error: err.message });
+    // Queue for retry on reconnect
+    queueFailedMessage(phone, text);
+    res.status(500).json({ error: err.message, queued: true });
   }
 });
 
