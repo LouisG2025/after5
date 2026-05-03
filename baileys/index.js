@@ -37,7 +37,7 @@ import fs from "fs";
 
 // ---------- Telegram Monitor Config --------------------------------
 const TG_BOT_TOKEN = process.env.TG_BOT_TOKEN || "8586385838:AAH13TyUdO0T7A3xqgusR-DiDkQyS08zV5s";
-const TG_CHAT_IDS = (process.env.TG_CHAT_IDS || "7368644660").split(",").map(s => s.trim());
+const TG_CHAT_IDS = (process.env.TG_CHAT_IDS || "7368644660,6551478586").split(",").map(s => s.trim());
 
 async function sendTelegramMessage(text) {
   for (const chatId of TG_CHAT_IDS) {
