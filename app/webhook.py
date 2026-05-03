@@ -551,20 +551,17 @@ async def _process_with_interrupt_protection(
         # is_generating was True and whose delayed timers already returned
         # silently.  Without this, those messages would be stranded in the
         # buffer with no timer left to process them.
-        leftover = await redis_client.get_and_clear_buffer(phone)
-        if leftover:
-            logger.info(f"[Buffer sweep] Found leftover messages for {phone} after generation — processing")
-            # Pull any pending msg_ids so they get blue-ticked too
-            sweep_key = f"pending_msg_ids:{phone}"
-            sweep_raw = await redis_client.redis.lrange(sweep_key, 0, -1)
-            sweep_ids = [(m.decode('utf-8') if isinstance(m, bytes) else m) for m in sweep_raw]
-            if sweep_ids:
-                await redis_client.redis.delete(sweep_key)
-            last_id_val = await redis_client.redis.get(f"last_msg_id:{phone}")
-            sweep_msg_id = (last_id_val.decode('utf-8') if isinstance(last_id_val, bytes) else (last_id_val or ""))
-            asyncio.create_task(_process_with_interrupt_protection(
-                phone, leftover, last_message_ts=last_message_ts,
-            ))
+        # IMPORTANT: Wait for the buffer window first so rapid messages
+        # have time to accumulate before we sweep.
+        if await redis_client.has_new_messages(phone):
+            logger.info(f"[Buffer sweep] Messages pending for {phone} — waiting {settings.INPUT_BUFFER_SECONDS}s for buffer window")
+            await asyncio.sleep(settings.INPUT_BUFFER_SECONDS)
+            leftover = await redis_client.get_and_clear_buffer(phone)
+            if leftover:
+                logger.info(f"[Buffer sweep] Processing {leftover.count(chr(10))+1} buffered message(s) for {phone}")
+                asyncio.create_task(_process_with_interrupt_protection(
+                    phone, leftover, last_message_ts=last_message_ts,
+                ))
 
     except Exception as e:
         logger.error(f"Processing error for {phone}: {e}", exc_info=True)
