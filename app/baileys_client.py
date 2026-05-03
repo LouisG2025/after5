@@ -24,13 +24,9 @@ def _normalize_phone(phone: str) -> str:
 
 
 async def _resolve_to_lid(phone_digits: str) -> str:
-    """Check if this real phone has a LID mapping and use that instead."""
-    from app.redis_client import redis_client
-    lid = await redis_client.redis.get(f"phone_to_lid:{phone_digits}")
-    if lid:
-        resolved = lid.decode('utf-8') if isinstance(lid, bytes) else lid
-        logger.info(f"[Baileys] Routing {phone_digits} via LID {resolved}")
-        return resolved
+    """Always use the real phone number for sending.
+    LID routing was causing messages to silently fail to deliver
+    because LID@s.whatsapp.net is not a valid delivery target."""
     return phone_digits
 
 
