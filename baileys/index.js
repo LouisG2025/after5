@@ -241,7 +241,7 @@ async function startBaileys() {
 
       // Send QR to Telegram (only once per pairing cycle, not every refresh)
       const now = Date.now();
-      if (now - lastQrSentAt > 120000) { // At most once every 2 minutes
+      if (now - lastQrSentAt > 600000) { // At most once every 10 minutes
         lastQrSentAt = now;
         try {
           const { default: QRImg } = await import("qrcode");
