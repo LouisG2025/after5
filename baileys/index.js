@@ -30,7 +30,9 @@ const {
 } = pkg;
 import pino from "pino";
 import qrcode from "qrcode-terminal";
-import QRCode from "qrcode";
+import { createRequire } from "module";
+const require = createRequire(import.meta.url);
+const QRCode = require("qrcode");
 import express from "express";
 import axios from "axios";
 import fs from "fs";
