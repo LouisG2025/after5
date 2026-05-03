@@ -93,6 +93,32 @@ def chunk_message(text: str, is_template: bool = False) -> list[str]:
         # formatting, not chunks. Trust the LLM's |||.
         chunks = [text]
 
+    # Post-processor: split statement + question that got jammed together.
+    # e.g. "this is it in action right now What does the business do?"
+    # → ["this is it in action right now.", "What does the business do?"]
+    # Only splits when a question-starting word appears mid-sentence with
+    # a capital letter (indicating the LLM forgot to add ||| or a full stop).
+    split_chunks = []
+    for chunk in chunks:
+        if re.search(r"https?://", chunk) or len(chunk) < 40:
+            split_chunks.append(chunk)
+            continue
+        # Match: any text + space + CAPITAL question word + rest ending in ?
+        q_match = re.search(
+            r'^(.+?[a-z,])\s+((?:What|How|Where|When|Why|Who|Which|Want|Out of|Do you|Does your|Is there|Are you|Have you|Can you|Could you)\s.+\?)$',
+            chunk
+        )
+        if q_match:
+            statement = q_match.group(1).rstrip().rstrip(',')
+            question = q_match.group(2).strip()
+            if statement and statement[-1] not in '.!?':
+                statement += '.'
+            split_chunks.append(statement)
+            split_chunks.append(question)
+        else:
+            split_chunks.append(chunk)
+    chunks = split_chunks
+
     # Post-processor: merge short trailing continuations back into prior bubble
     chunks = _merge_continuations(chunks)
 
