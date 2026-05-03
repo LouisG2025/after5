@@ -244,6 +244,15 @@ async def process_conversation(phone: str, message: str, conversation_id: str = 
         if original_response != response_text:
             logger.info("[Conversation] Stripped system tags from response for %s", phone)
 
+        # Step 9.6: URL Safety Net — replace any hallucinated calendly URL with the correct one
+        canonical_link = settings.CALENDLY_LINK
+        wrong_url_pattern = r'https?://calendly\.com/[^\s)}\]]*'
+        found_urls = re.findall(wrong_url_pattern, response_text)
+        for url in found_urls:
+            if url != canonical_link:
+                logger.warning("[Conversation] Replacing hallucinated URL %s with %s for %s", url, canonical_link, phone)
+                response_text = response_text.replace(url, canonical_link)
+
         # Step 9: Interrupt Check — did new messages arrive during LLM call?
         new_messages_str = await redis_client.get_and_clear_buffer(phone)
         if new_messages_str:
