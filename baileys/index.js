@@ -527,9 +527,17 @@ app.post("/read", async (req, res) => {
 // ---------- Helpers ---------------------------------------------
 function toJid(phone) {
   // Accepts "whatsapp:+447700900000", "447700900000", "+447700900000"
-  // ALWAYS use the standard phone JID format - never use stored LIDs.
-  // Using LIDs for sending causes replies to appear as a separate chat.
   const digits = String(phone).replace("whatsapp:", "").replace("+", "");
+
+  // If this phone is actually a LID (stored from an inbound @lid message),
+  // use the original @lid JID so the reply lands in the same chat.
+  // Sending a LID via @s.whatsapp.net silently fails.
+  const storedJid = jidByPhone.get(digits);
+  if (storedJid && storedJid.endsWith("@lid")) {
+    logger.info(`[toJid] Using stored LID JID for ${digits}: ${storedJid}`);
+    return storedJid;
+  }
+
   return `${digits}@s.whatsapp.net`;
 }
 
