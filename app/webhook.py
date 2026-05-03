@@ -194,10 +194,9 @@ async def baileys_incoming(msg: BaileysIncoming, background_tasks: BackgroundTas
     # how substantive their messages have been
     await redis_client.redis.set(f"last_lead_msg:{sender_phone}", msg.text[:500], ex=600)
 
-    # INSTANT BLUE TICK: Always blue-tick every incoming message immediately.
-    # A real human's messages turn blue as soon as the chat is open.
-    # This fires regardless of whether Albert is generating or idle.
-    background_tasks.add_task(_snappy_blue_tick, sender_phone, message_id)
+    # Blue ticks are handled later — when Albert is about to reply,
+    # all buffered messages turn blue together (like a human reading
+    # before responding). No instant blue ticks here.
 
     background_tasks.add_task(_delayed_buffer_process, sender_phone, batch_id, message_ts)
     if not await redis_client.redis.get(f"buffer_first:{sender_phone}"):
@@ -384,8 +383,7 @@ async def webhook(request: Request, background_tasks: BackgroundTasks):
         # how substantive their messages have been
         await redis_client.redis.set(f"last_lead_msg:{sender_phone}", message_text[:500], ex=600)
 
-        # INSTANT BLUE TICK: Always blue-tick every incoming message immediately.
-        background_tasks.add_task(_snappy_blue_tick, sender_phone, message_id)
+        # Blue ticks handled later when Albert processes the batch.
 
         # 5. Instant Blue Tick & Typing (REMOVED: Handled by advanced timing sequence)
         # background_tasks.add_task(mark_as_read, "", message_id)
